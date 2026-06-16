@@ -1,0 +1,20 @@
+{
+  "name": "sophnet-tts",
+  "version": "1.0.0",
+  "types": [
+    "builtin"
+  ],
+  "displayName": "",
+  "description": "",
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-04-09",
+      "changes": [
+        "初次提交"
+      ]
+    }
+  ],
+  "createdAt": "2026-04-09",
+  "updatedAt": "2026-04-09"
+}
