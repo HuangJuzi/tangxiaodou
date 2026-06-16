@@ -42,10 +42,12 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   http: ^1.2.0
+  web_socket_channel: ^3.0.0
   record: ^5.1.0
   audioplayers: ^6.1.0
   permission_handler: ^11.3.0
   uuid: ^4.5.1
+  path_provider: ^2.1.0
 ```
 
 - [ ] **Step 3: 安装依赖**
@@ -595,7 +597,7 @@ EOF
 
 ---
 
-### Task 8: ASR 语音识别服务（接口桩）
+### Task 8: ASR 语音识别服务（Sophnet WebSocket）
 
 **Files:**
 - Create: `lib/services/asr_service.dart`
@@ -603,28 +605,66 @@ EOF
 - [ ] **Step 1: 创建 asr_service.dart**
 
 ```dart
-/// Abstract ASR service - implement with your speech recognition provider.
-abstract class AsrService {
-  /// Upload audio bytes and return recognized text.
-  Future<String> recognize(List<int> audioBytes);
-}
+import 'dart:async';
+import 'dart:convert';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
-/// Stub for development/testing - returns mock text.
-class StubAsrService implements AsrService {
-  int _counter = 0;
-  final List<String> _mockReplies = const [
-    '你好呀豆豆！',
-    '我今天好开心！',
-    '给我讲个故事吧',
-    '今天天气怎么样？',
-  ];
+class AsrService {
+  final String _apiKey;
+  static const _url = 'wss://www.sophnet.com/api/open-apis/projects/easyllms/stream-speech';
 
-  @override
-  Future<String> recognize(List<int> audioBytes) async {
-    await Future.delayed(const Duration(milliseconds: 600));
-    final text = _mockReplies[_counter % _mockReplies.length];
-    _counter++;
-    return text;
+  AsrService({required String apiKey}) : _apiKey = apiKey;
+
+  /// Stream audio bytes and receive incremental recognition results.
+  /// Send [audioBytes] chunks, receive text updates.
+  /// Returns the final recognized text.
+  Future<String> recognize(Stream<List<int>> audioStream, {String format = 'pcm', int sampleRate = 16000}) async {
+    final wsUrl = Uri.parse('$_url?apikey=$_apiKey&format=$format&sample_rate=$sampleRate&heartbeat=true');
+    final channel = WebSocketChannel.connect(wsUrl);
+
+    final completer = Completer<String>();
+    final buffer = StringBuffer();
+
+    channel.stream.listen(
+      (data) {
+        if (data is String) {
+          try {
+            final json = jsonDecode(data);
+            if (json['status'] == 'ok') return; // connection ok
+            final text = json['text'] as String?;
+            if (text != null) {
+              // Track latest full sentence as final result
+              if (json['is_sentence_end'] == true) {
+                buffer.clear();
+                buffer.write(text);
+              }
+            }
+          } on FormatException { /* ignore malformed */ }
+        }
+      },
+      onError: (e) {
+        if (!completer.isCompleted) {
+          completer.complete(buffer.isNotEmpty ? buffer.toString() : '');
+        }
+      },
+      onDone: () {
+        if (!completer.isCompleted) {
+          completer.complete(buffer.isNotEmpty ? buffer.toString() : '');
+        }
+      },
+      cancelOnError: true,
+    );
+
+    // Send audio chunks
+    await for (final chunk in audioStream) {
+      channel.sink.add(chunk);
+    }
+    // Signal end of audio
+    channel.sink.add('BYE');
+
+    final result = await completer.future;
+    await channel.sink.close();
+    return result;
   }
 }
 ```
@@ -633,9 +673,10 @@ class StubAsrService implements AsrService {
 
 ```bash
 cd /mnt/b/workdir/gitlab/Bella && git add -A && git commit -m "$(cat <<'EOF'
-feat: add AsrService abstract class and stub
+feat: add AsrService with Sophnet WebSocket streaming
 
-Abstract interface for speech recognition. Stub returns mock phrases for dev.
+Sends audio chunks via WebSocket, receives incremental recognition.
+Returns final text when is_sentence_end=true.
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 EOF
@@ -644,7 +685,7 @@ EOF
 
 ---
 
-### Task 9: TTS 文字转语音服务（接口桩）
+### Task 9: TTS 文字转语音服务（Sophnet REST）
 
 **Files:**
 - Create: `lib/services/tts_service.dart`
@@ -652,47 +693,43 @@ EOF
 - [ ] **Step 1: 创建 tts_service.dart**
 
 ```dart
-import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
-/// Callback when a sentence audio is ready for playback.
-typedef OnAudioReady = void Function(List<int> audioBytes, String sentence);
+class TtsService {
+  final String _apiKey;
+  final String _voice;
+  static const _url = 'https://www.sophnet.com/api/open-apis/projects/easyllms/voice/synthesize-audio';
 
-/// Abstract TTS service - implement with your WebSocket TTS provider.
-abstract class TtsService {
-  /// Synthesize text sentence by sentence (split on punctuation).
-  /// Calls [onAudioReady] for each sentence's audio data.
-  Future<void> synthesize(String text, {required OnAudioReady onAudioReady});
+  TtsService({required String apiKey, String voice = 'longjiqi'})
+      : _apiKey = apiKey,
+        _voice = voice;
 
-  /// Stop current playback.
-  void stop();
+  /// Synthesize text and return audio bytes (MP3).
+  Future<List<int>> synthesize(String text) async {
+    final response = await http.post(
+      Uri.parse(_url),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_apiKey',
+      },
+      body: jsonEncode({
+        'text': [text],
+        'synthesis_param': {
+          'model': 'cosyvoice-v2',
+          'voice': _voice,
+          'format': 'MP3_16000HZ_MONO_128KBPS',
+          'volume': 80,
+          'speechRate': 1.0,
+          'pitchRate': 1,
+        },
+      }),
+    );
 
-  /// Split text into sentences by punctuation marks.
-  static final _sentenceRe = RegExp(r'[^。.！!？?\n]+[。.！!？?\n]?');
-
-  static List<String> splitSentences(String text) {
-    final matches = _sentenceRe.allMatches(text);
-    if (matches.isEmpty) return [text];
-    return matches.map((m) => m.group(0)!.trim()).where((s) => s.isNotEmpty).toList();
-  }
-}
-
-/// Stub for development/testing - prints sentences with delay.
-class StubTtsService implements TtsService {
-  Timer? _timer;
-
-  @override
-  Future<void> synthesize(String text, {required OnAudioReady onAudioReady}) async {
-    final sentences = TtsService.splitSentences(text);
-    for (final sentence in sentences) {
-      await Future.delayed(const Duration(milliseconds: 800));
-      onAudioReady([], sentence); // empty audio bytes in stub
+    if (response.statusCode != 200) {
+      throw Exception('TTS API error: ${response.statusCode}');
     }
-  }
-
-  @override
-  void stop() {
-    _timer?.cancel();
-    _timer = null;
+    return response.bodyBytes;
   }
 }
 ```
@@ -701,9 +738,10 @@ class StubTtsService implements TtsService {
 
 ```bash
 cd /mnt/b/workdir/gitlab/Bella && git add -A && git commit -m "$(cat <<'EOF'
-feat: add TtsService abstract class and stub
+feat: add TtsService with Sophnet REST API
 
-Sentence-splitting on punctuation. Stub simulates per-sentence delay.
+Sends text to Sophnet TTS API, receives MP3 audio bytes.
+Default voice: longjiqi (呆萌机器人).
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 EOF
@@ -976,12 +1014,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _playTts(Message message) async {
     setState(() => _playingMessageId = message.id);
     try {
-      await widget.ttsService.synthesize(
-        message.content,
-        onAudioReady: (audioBytes, sentence) {
-          // TTS audio ready - stub just waits
-        },
-      );
+      final audioBytes = await widget.ttsService.synthesize(message.content);
+      // TODO: play audioBytes via audioplayers package
     } catch (_) {
       // Silently skip TTS errors
     } finally {
@@ -993,7 +1027,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onRecordStart() {
     setState(() => _isRecording = true);
-    // TODO: wire actual recording via record package
+    // Recording wired in Task 14
   }
 
   void _onRecordStop() async {
@@ -1003,11 +1037,16 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      // TODO: replace with actual audio bytes from recorder
-      final text = await widget.asrService.recognize([]);
+      // Audio bytes from recorder (wired in Task 14)
+      final audioBytes = <int>[];
+      final text = await widget.asrService.recognize(
+        Stream.fromIterable([audioBytes]),
+      );
       if (mounted) {
         setState(() => _isProcessingVoice = false);
-        await _sendMessage(text);
+        if (text.isNotEmpty) {
+          await _sendMessage(text);
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -1218,6 +1257,11 @@ import 'services/asr_service.dart';
 import 'services/tts_service.dart';
 import 'screens/chat_screen.dart';
 
+const _llmUrl = 'https://moltbot-0014c62b7c7947c3.sophnet.com';
+const _llmAccountId = 'parent-toddler';
+const _llmSecret = 'oz8hIK-JMuNzIajz5KE50MI3XqgtT_5J';
+const _apiKey = 'WGT8fpUL1g0kJkyZ-sdKGVHHHd_oPmfaPCCg06-I0-6GMzFyAiOVlKY6ZbnA6o8nPV97c-quDei6Hzh-7Pq6qw';
+
 void main() {
   runApp(const BellaApp());
 }
@@ -1229,9 +1273,9 @@ class BellaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final llmService = LlmService(
       config: LlmConfig(
-        baseUrl: const String.fromEnvironment('BOT_API_BASE_URL'),
-        accountId: const String.fromEnvironment('BOT_API_ACCOUNT_ID'),
-        apiSecret: const String.fromEnvironment('BOT_API_SECRET'),
+        baseUrl: _llmUrl,
+        accountId: _llmAccountId,
+        apiSecret: _llmSecret,
       ),
     );
 
@@ -1241,8 +1285,8 @@ class BellaApp extends StatelessWidget {
       theme: AppTheme.light,
       home: ChatScreen(
         llmService: llmService,
-        asrService: StubAsrService(),
-        ttsService: StubTtsService(),
+        asrService: AsrService(apiKey: _apiKey),
+        ttsService: TtsService(apiKey: _apiKey, voice: 'longjiqi'),
       ),
     );
   }
@@ -1300,7 +1344,7 @@ EOF
 
 ---
 
-### Task 14: 对接真实录音功能（record package）
+### Task 14: 对接真实录音功能（record + ASR + TTS 播放）
 
 **Files:**
 - Modify: `lib/screens/chat_screen.dart`
@@ -1315,7 +1359,7 @@ EOF
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
 ```
 
-- [ ] **Step 2: 更新 ChatScreen 集成 record package**
+- [ ] **Step 2: 更新 ChatScreen 集成真实录音 + ASR + TTS 播放**
 
 Read `lib/screens/chat_screen.dart`，在 import 区添加：
 
@@ -1323,12 +1367,15 @@ Read `lib/screens/chat_screen.dart`，在 import 区添加：
 import 'dart:io';
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 ```
 
 在 `_ChatScreenState` 中添加：
 
 ```dart
 final _audioRecorder = AudioRecorder();
+final _audioPlayer = AudioPlayer();
 ```
 
 替换 `_onRecordStart`：
@@ -1344,15 +1391,17 @@ void _onRecordStart() async {
     }
     return;
   }
+  final dir = await getTemporaryDirectory();
+  final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
   await _audioRecorder.start(
     const RecordConfig(encoder: AudioEncoder.aacLc),
-    path: '/tmp/voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+    path: path,
   );
   setState(() => _isRecording = true);
 }
 ```
 
-替换 `_onRecordStop` 中的录音部分（保留 ASR 识别逻辑）：
+替换 `_onRecordStop`：
 
 ```dart
 void _onRecordStop() async {
@@ -1363,15 +1412,18 @@ void _onRecordStop() async {
 
   try {
     final path = await _audioRecorder.stop();
-    if (path == null) return;
+    if (path == null || !File(path).existsSync()) return;
 
-    final file = File(path!);
-    final audioBytes = await file.readAsBytes();
-
-    final text = await widget.asrService.recognize(audioBytes);
-    if (mounted) {
+    final fileBytes = await File(path).readAsBytes();
+    // Send as one chunk for short recordings
+    final text = await widget.asrService.recognize(
+      Stream.fromIterable([fileBytes]),
+    );
+    if (mounted && text.isNotEmpty) {
       setState(() => _isProcessingVoice = false);
       await _sendMessage(text);
+    } else if (mounted) {
+      setState(() => _isProcessingVoice = false);
     }
   } catch (_) {
     if (mounted) {
@@ -1382,6 +1434,27 @@ void _onRecordStop() async {
     }
   }
 }
+```
+
+替换 `_playTts` 为真实播放：
+
+```dart
+Future<void> _playTts(Message message) async {
+  setState(() => _playingMessageId = message.id);
+  try {
+    final audioBytes = await widget.ttsService.synthesize(message.content);
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/tts_${message.id}.mp3');
+    await file.writeAsBytes(audioBytes);
+    await _audioPlayer.play(DeviceFileSource(file.path));
+    _audioPlayer.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _playingMessageId = null);
+    });
+  } catch (_) {
+    if (mounted) setState(() => _playingMessageId = null);
+  }
+}
+```
 ```
 
 - [ ] **Step 3: 提交**
