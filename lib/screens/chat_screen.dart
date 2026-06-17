@@ -27,7 +27,6 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final List<Message> _messages = [];
-  bool _isAiReplying = false;
   bool _isRecording = false;
   bool _isProcessingVoice = false;
   String? _playingMessageId;
@@ -68,7 +67,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage(String text) async {
     setState(() {
       _messages.add(Message(role: MessageRole.user, content: text));
-      _isAiReplying = true;
+      // streaming flag handled by aiMessage.isStreaming
     });
     _scrollToBottom();
 
@@ -96,7 +95,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       setState(() {
         aiMessage.isStreaming = false;
-        _isAiReplying = false;
+        // streaming complete
       });
       _scrollToBottom();
 
@@ -111,7 +110,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _playTts(Message message) async {
     setState(() => _playingMessageId = message.id);
     try {
-      final audioBytes = await widget.ttsService.synthesize(message.content);
+      final _ = await widget.ttsService.synthesize(message.content);
       // Audio playback wired in Task 14
       if (mounted) setState(() => _playingMessageId = null);
     } catch (_) {
@@ -130,9 +129,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final audioBytes = <int>[];
       final text = await widget.asrService.recognize(
-        Stream.fromIterable([audioBytes]),
+        Stream.fromIterable([<int>[]]),
       );
       if (mounted) {
         setState(() => _isProcessingVoice = false);
