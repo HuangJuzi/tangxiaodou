@@ -14,7 +14,6 @@ import '../services/asr_service.dart';
 import '../services/tts_service.dart';
 import '../widgets/chat_bubble.dart';
 
-import '../widgets/voice_input_button.dart';
 
 class ChatScreen extends StatefulWidget {
   final LlmService llmService;
@@ -407,29 +406,58 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildVoiceInput() {
-    return Stack(
-      alignment: Alignment.center,
+    return Row(
       children: [
-        VoiceInputButton(
-          isRecording: _isRecording,
-          isProcessing: _isProcessingVoice,
-          onRecordStart: _onRecordStart,
-          onRecordStop: _onRecordStop,
-        ),
-        Positioned(
-          right: 0,
+        Expanded(
           child: GestureDetector(
-            onTap: () => setState(() => _isTextMode = true),
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: const BoxDecoration(
-                color: Color(0xFFF3E5F5),
-                shape: BoxShape.circle,
+            onLongPressStart: (_) => _onRecordStart(),
+            onLongPressEnd: (_) => _onRecordStop(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              height: 44,
+              decoration: BoxDecoration(
+                gradient: _isRecording
+                    ? const LinearGradient(colors: [Color(0xFFE53935), Color(0xFFEF5350)])
+                    : const LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]),
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: [
+                  BoxShadow(
+                    color: (_isRecording ? const Color(0xFFE53935) : AppColors.primary).withValues(alpha: 0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               alignment: Alignment.center,
-              child: const Text('⌨', style: TextStyle(fontSize: 16)),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _isRecording ? '●' : '🎤',
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _isProcessingVoice ? '识别中...' : (_isRecording ? '松开发送' : '按住说话'),
+                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
             ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () => setState(() => _isTextMode = true),
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: const BoxDecoration(
+              color: Color(0xFFF3E5F5),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: const Text('⌨', style: TextStyle(fontSize: 16)),
           ),
         ),
       ],
@@ -455,6 +483,7 @@ class _ChatScreenState extends State<ChatScreen> {
         const SizedBox(width: 8),
         Expanded(
           child: Container(
+            height: 44,
             decoration: BoxDecoration(
               border: Border.all(color: AppColors.primaryLight, width: 2),
               borderRadius: BorderRadius.circular(22),
