@@ -279,14 +279,13 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _NavDot(color: AppColors.primary, size: 9),
-            SizedBox(width: 5),
-            _NavDot(color: AppColors.primaryLight, size: 9),
-            SizedBox(width: 10),
-            Text('豆豆', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Color(0xFF333333))),
+            _NavDot(color: AppColors.primary, size: 7),
+            SizedBox(width: 4),
+            _NavDot(color: AppColors.primaryLight, size: 7),
           ],
         ),
         centerTitle: true,
+        toolbarHeight: 36,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         elevation: 0,
