@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
@@ -46,10 +47,14 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _messages.add(Message(
-      role: MessageRole.ai,
-      content: '你好呀！我是豆豆~ 今天过得怎么样？',
-    ));
+    _loadMessages().then((_) {
+      if (_messages.isEmpty) {
+        _messages.add(Message(
+          role: MessageRole.ai,
+          content: '你好呀！我是豆豆~ 今天过得怎么样？',
+        ));
+      }
+    });
   }
 
   @override
@@ -73,11 +78,37 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<String> get _messagesPath async {
+    final dir = await getApplicationDocumentsDirectory();
+    return '${dir.path}/messages.json';
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      final file = File(await _messagesPath);
+      if (!await file.exists()) return;
+      final json = jsonDecode(await file.readAsString()) as List<dynamic>;
+      final messages = json
+          .map((m) => Message.fromJson(m as Map<String, dynamic>))
+          .toList();
+      if (messages.isNotEmpty) {
+        setState(() => _messages.addAll(messages));
+      }
+    } on FormatException {
+      // corrupted file, ignore
+    }
+  }
+
+  Future<void> _saveMessages() async {
+    final json = jsonEncode(_messages.map((m) => m.toJson()).toList());
+    await File(await _messagesPath).writeAsString(json);
+  }
+
   Future<void> _sendMessage(String text) async {
     setState(() {
       _messages.add(Message(role: MessageRole.user, content: text));
-      // streaming flag handled by aiMessage.isStreaming
     });
+    _saveMessages();
     _scrollToBottom();
 
     final aiMessage = Message(role: MessageRole.ai, content: '', isStreaming: true);
@@ -104,8 +135,8 @@ class _ChatScreenState extends State<ChatScreen> {
     } finally {
       setState(() {
         aiMessage.isStreaming = false;
-        // streaming complete
       });
+      _saveMessages();
       _scrollToBottom();
 
       if (aiMessage.content.isNotEmpty &&
