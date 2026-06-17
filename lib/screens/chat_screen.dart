@@ -11,7 +11,7 @@ import '../services/llm_service.dart';
 import '../services/asr_service.dart';
 import '../services/tts_service.dart';
 import '../widgets/chat_bubble.dart';
-import '../widgets/avatar_widget.dart';
+
 import '../widgets/voice_input_button.dart';
 
 class ChatScreen extends StatefulWidget {
