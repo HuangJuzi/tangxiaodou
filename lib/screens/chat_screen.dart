@@ -347,11 +347,24 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('豆豆', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+        title: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _NavDot(color: AppColors.primary, size: 9),
+            SizedBox(width: 5),
+            _NavDot(color: AppColors.primaryLight, size: 9),
+            SizedBox(width: 10),
+            Text('豆豆', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Color(0xFF333333))),
+          ],
+        ),
         centerTitle: true,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
-        elevation: 0.5,
+        elevation: 0,
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: ColoredBox(color: Color(0xFFF0E6F6)),
+        ),
       ),
       body: Column(
         children: [
@@ -505,4 +518,19 @@ class _TtsJob {
   final int gen;
   List<int>? bytes;
   _TtsJob({required this.text, required this.gen});
+}
+
+class _NavDot extends StatelessWidget {
+  final Color color;
+  final double size;
+  const _NavDot({required this.color, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
 }
