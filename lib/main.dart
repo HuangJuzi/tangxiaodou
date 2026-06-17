@@ -34,7 +34,7 @@ class BellaApp extends StatelessWidget {
       home: ChatScreen(
         llmService: llmService,
         asrService: AsrService(apiKey: _apiKey),
-        ttsService: TtsService(apiKey: _apiKey, voice: 'longdaiyu'),
+        ttsService: TtsService(apiKey: _apiKey, voice: 'longanwen'),
       ),
     );
   }

@@ -192,6 +192,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     final buffer = StringBuffer();
+    final delimRe = RegExp(r'[,，。！？~…!?\n]');
     try {
       await for (final token in widget.llmService.chat(_senderId, text)) {
         buffer.write(token);
@@ -201,15 +202,15 @@ class _ChatScreenState extends State<ChatScreen> {
         });
         _scrollToBottom();
 
-        final pending = _pendingText.toString();
-        final delim = RegExp(r'[,，。！？~…!?\n]').firstMatch(pending);
-        if (delim != null) {
-          final end = delim.end;
-          final sentence = pending.substring(0, end);
-          _pendingText.clear();
-          _pendingText.write(pending.substring(end));
-          _enqueueTts(sentence);
+        var pending = _pendingText.toString();
+        _pendingText.clear();
+        while (pending.isNotEmpty) {
+          final delim = delimRe.firstMatch(pending);
+          if (delim == null) break;
+          _enqueueTts(pending.substring(0, delim.end));
+          pending = pending.substring(delim.end);
         }
+        _pendingText.write(pending);
       }
       if (_pendingText.isNotEmpty) {
         _enqueueTts(_pendingText.toString());
@@ -345,6 +346,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('豆豆', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+        centerTitle: true,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        elevation: 0.5,
+      ),
       body: Column(
         children: [
           Expanded(
