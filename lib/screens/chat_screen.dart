@@ -41,6 +41,10 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _userAvatarPath;
   String? _aiAvatarPath;
   final _imagePicker = ImagePicker();
+  final _pendingText = StringBuffer();
+  final List<_TtsJob> _ttsQueue = [];
+  int _ttsGen = 0;
+  bool _isPlayingTts = false;
 
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
@@ -191,10 +195,25 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await for (final token in widget.llmService.chat(_senderId, text)) {
         buffer.write(token);
+        _pendingText.write(token);
         setState(() {
           aiMessage.content = buffer.toString();
         });
         _scrollToBottom();
+
+        final pending = _pendingText.toString();
+        final delim = RegExp(r'[,，。！？~…!?\n]').firstMatch(pending);
+        if (delim != null) {
+          final end = delim.end;
+          final sentence = pending.substring(0, end);
+          _pendingText.clear();
+          _pendingText.write(pending.substring(end));
+          _enqueueTts(sentence);
+        }
+      }
+      if (_pendingText.isNotEmpty) {
+        _enqueueTts(_pendingText.toString());
+        _pendingText.clear();
       }
     } on HttpException {
       setState(() {
@@ -210,12 +229,6 @@ class _ChatScreenState extends State<ChatScreen> {
       });
       _saveMessages();
       _scrollToBottom();
-
-      if (aiMessage.content.isNotEmpty &&
-          !aiMessage.content.startsWith('网络') &&
-          !aiMessage.content.startsWith('出错')) {
-        _playTts(aiMessage);
-      }
     }
   }
 
@@ -235,7 +248,52 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _enqueueTts(String text) {
+    final gen = _ttsGen;
+    final idx = _ttsQueue.length;
+    _ttsQueue.add(_TtsJob(text: text, gen: gen));
+    widget.ttsService.synthesize(text).then((bytes) {
+      if (gen != _ttsGen) return;
+      if (idx < _ttsQueue.length) {
+        _ttsQueue[idx].bytes = bytes;
+      }
+      _playNextInQueue();
+    });
+  }
+
+  void _playNextInQueue() {
+    if (_isPlayingTts) return;
+
+    while (_ttsQueue.isNotEmpty && _ttsQueue.first.bytes != null) {
+      final job = _ttsQueue.removeAt(0);
+      if (job.gen != _ttsGen) continue;
+
+      _isPlayingTts = true;
+      _playTtsBytes(job.bytes!).then((_) {
+        _isPlayingTts = false;
+        _playNextInQueue();
+      });
+      return;
+    }
+  }
+
+  Future<void> _playTtsBytes(List<int> bytes) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/tts_stream_${DateTime.now().millisecondsSinceEpoch}.mp3');
+      await file.writeAsBytes(bytes);
+      await _audioPlayer.play(DeviceFileSource(file.path));
+      await _audioPlayer.onPlayerComplete.first;
+    } catch (_) {}
+  }
+
   void _onRecordStart() async {
+    _ttsGen++;
+    _ttsQueue.clear();
+    _pendingText.clear();
+    _isPlayingTts = false;
+    _audioPlayer.stop();
+
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
       if (mounted) {
@@ -432,4 +490,11 @@ class _ChatScreenState extends State<ChatScreen> {
       ],
     );
   }
+}
+
+class _TtsJob {
+  final String text;
+  final int gen;
+  List<int>? bytes;
+  _TtsJob({required this.text, required this.gen});
 }
