@@ -1,24 +1,17 @@
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../theme.dart';
-import 'avatar_widget.dart';
 import 'typing_dots.dart';
 
 class ChatBubble extends StatelessWidget {
   final Message message;
   final VoidCallback? onTtsTap;
   final String? playingMessageId;
-  final String? userAvatarPath;
-  final String? aiAvatarPath;
-  final void Function(bool isUser)? onAvatarLongPress;
 
   const ChatBubble({
     required this.message,
     this.onTtsTap,
     this.playingMessageId,
-    this.userAvatarPath,
-    this.aiAvatarPath,
-    this.onAvatarLongPress,
     super.key,
   });
 
@@ -33,13 +26,6 @@ class ChatBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment: isAi ? MainAxisAlignment.start : MainAxisAlignment.end,
         children: [
-          if (isAi) ...[
-            AvatarWidget(
-              imagePath: aiAvatarPath,
-              onLongPress: onAvatarLongPress != null ? () => onAvatarLongPress!(false) : null,
-            ),
-            const SizedBox(width: 8),
-          ],
           Flexible(
             child: Column(
               crossAxisAlignment:
@@ -98,14 +84,6 @@ class ChatBubble extends StatelessWidget {
               ],
             ),
           ),
-          if (!isAi) ...[
-            const SizedBox(width: 8),
-            AvatarWidget(
-              isUser: true,
-              imagePath: userAvatarPath,
-              onLongPress: onAvatarLongPress != null ? () => onAvatarLongPress!(true) : null,
-            ),
-          ],
         ],
       ),
     );

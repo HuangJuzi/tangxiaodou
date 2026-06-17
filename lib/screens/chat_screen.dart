@@ -6,7 +6,6 @@ import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:image_picker/image_picker.dart';
 import '../models/message.dart';
 import '../theme.dart';
 import '../services/llm_service.dart';
@@ -37,9 +36,6 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isProcessingVoice = false;
   String? _playingMessageId;
   bool _isTextMode = false;
-  String? _userAvatarPath;
-  String? _aiAvatarPath;
-  final _imagePicker = ImagePicker();
   final _pendingText = StringBuffer();
   final List<_TtsJob> _ttsQueue = [];
   int _ttsGen = 0;
@@ -62,7 +58,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
       }
     });
-    _loadAvatars();
   }
 
   @override
@@ -112,72 +107,7 @@ class _ChatScreenState extends State<ChatScreen> {
     await File(await _messagesPath).writeAsString(json);
   }
 
-  Future<String> get _avatarConfigPath async {
-    final dir = await getApplicationDocumentsDirectory();
-    return '${dir.path}/avatar_config.json';
-  }
 
-  Future<void> _loadAvatars() async {
-    try {
-      final file = File(await _avatarConfigPath);
-      if (!await file.exists()) return;
-      final cfg = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      setState(() {
-        _userAvatarPath = cfg['user'] as String?;
-        _aiAvatarPath = cfg['ai'] as String?;
-      });
-    } on FormatException {
-      // ignore
-    }
-  }
-
-  Future<void> _saveAvatarConfig() async {
-    final cfg = {
-      'user': _userAvatarPath,
-      'ai': _aiAvatarPath,
-    };
-    await File(await _avatarConfigPath).writeAsString(jsonEncode(cfg));
-  }
-
-  Future<void> _pickAvatar(bool isUser) async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      builder: (_) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('从相册选择'),
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('拍照'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (source == null) return;
-
-    final picked = await _imagePicker.pickImage(source: source, imageQuality: 80);
-    if (picked == null) return;
-
-    final dir = await getApplicationDocumentsDirectory();
-    final destName = isUser ? 'user.png' : 'ai.png';
-    final destPath = '${dir.path}/$destName';
-    await File(picked.path).copy(destPath);
-
-    setState(() {
-      if (isUser) {
-        _userAvatarPath = destPath;
-      } else {
-        _aiAvatarPath = destPath;
-      }
-    });
-    _saveAvatarConfig();
-  }
 
   Future<void> _sendMessage(String text) async {
     setState(() {
@@ -382,9 +312,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 },
                 playingMessageId: _playingMessageId,
-                userAvatarPath: _userAvatarPath,
-                aiAvatarPath: _aiAvatarPath,
-                onAvatarLongPress: (isUser) => _pickAvatar(isUser),
               ),
             ),
           ),
