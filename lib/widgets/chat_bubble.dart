@@ -8,11 +8,17 @@ class ChatBubble extends StatelessWidget {
   final Message message;
   final VoidCallback? onTtsTap;
   final String? playingMessageId;
+  final String? userAvatarPath;
+  final String? aiAvatarPath;
+  final void Function(bool isUser)? onAvatarLongPress;
 
   const ChatBubble({
     required this.message,
     this.onTtsTap,
     this.playingMessageId,
+    this.userAvatarPath,
+    this.aiAvatarPath,
+    this.onAvatarLongPress,
     super.key,
   });
 
@@ -28,7 +34,10 @@ class ChatBubble extends StatelessWidget {
         mainAxisAlignment: isAi ? MainAxisAlignment.start : MainAxisAlignment.end,
         children: [
           if (isAi) ...[
-            const AvatarWidget(),
+            AvatarWidget(
+              imagePath: aiAvatarPath,
+              onLongPress: onAvatarLongPress != null ? () => onAvatarLongPress!(false) : null,
+            ),
             const SizedBox(width: 8),
           ],
           Flexible(
@@ -91,7 +100,11 @@ class ChatBubble extends StatelessWidget {
           ),
           if (!isAi) ...[
             const SizedBox(width: 8),
-            const AvatarWidget(isUser: true),
+            AvatarWidget(
+              isUser: true,
+              imagePath: userAvatarPath,
+              onLongPress: onAvatarLongPress != null ? () => onAvatarLongPress!(true) : null,
+            ),
           ],
         ],
       ),
