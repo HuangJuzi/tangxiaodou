@@ -1,5 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:record/record.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/message.dart';
 import '../theme.dart';
 import '../services/llm_service.dart';
@@ -34,6 +39,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
+  final _audioRecorder = AudioRecorder();
+  final _audioPlayer = AudioPlayer();
   final _senderId = 'user-${DateTime.now().millisecondsSinceEpoch}';
 
   @override
@@ -49,6 +56,8 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _scrollController.dispose();
     _textController.dispose();
+    _audioRecorder.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
@@ -110,15 +119,35 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _playTts(Message message) async {
     setState(() => _playingMessageId = message.id);
     try {
-      final _ = await widget.ttsService.synthesize(message.content);
-      // Audio playback wired in Task 14
-      if (mounted) setState(() => _playingMessageId = null);
+      final audioBytes = await widget.ttsService.synthesize(message.content);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/tts_${message.id}.mp3');
+      await file.writeAsBytes(audioBytes);
+      await _audioPlayer.play(DeviceFileSource(file.path));
+      _audioPlayer.onPlayerComplete.listen((_) {
+        if (mounted) setState(() => _playingMessageId = null);
+      });
     } catch (_) {
       if (mounted) setState(() => _playingMessageId = null);
     }
   }
 
-  void _onRecordStart() {
+  void _onRecordStart() async {
+    final status = await Permission.microphone.request();
+    if (!status.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请在设置中开启麦克风权限')),
+        );
+      }
+      return;
+    }
+    final dir = await getTemporaryDirectory();
+    final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    await _audioRecorder.start(
+      const RecordConfig(encoder: AudioEncoder.aacLc),
+      path: path,
+    );
     setState(() => _isRecording = true);
   }
 
@@ -129,14 +158,18 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
+      final path = await _audioRecorder.stop();
+      if (path == null || !File(path).existsSync()) return;
+
+      final fileBytes = await File(path).readAsBytes();
       final text = await widget.asrService.recognize(
-        Stream.fromIterable([<int>[]]),
+        Stream.fromIterable([fileBytes]),
       );
-      if (mounted) {
+      if (mounted && text.isNotEmpty) {
         setState(() => _isProcessingVoice = false);
-        if (text.isNotEmpty) {
-          await _sendMessage(text);
-        }
+        await _sendMessage(text);
+      } else if (mounted) {
+        setState(() => _isProcessingVoice = false);
       }
     } catch (_) {
       if (mounted) {
