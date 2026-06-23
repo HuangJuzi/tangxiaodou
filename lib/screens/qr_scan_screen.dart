@@ -46,6 +46,15 @@ class _QrScanScreenState extends State<QrScanScreen> {
     final mq = MediaQuery.of(context);
     final screenWidth = mq.size.width;
     final screenHeight = mq.size.height;
+    // Square scan box, side = screen width (fills horizontal).
+    const squareSize = double.infinity; // sentinel: use screen width below
+    final side = squareSize == double.infinity ? screenWidth : squareSize;
+    // Preserve the bottom edge of the prior 220-tall strip with screenH/12
+    // upward offset:
+    //   strip bottom Y = screenH/2 - screenH/12 + 110
+    //   square bottom Y = screenH/2 - O + side/2
+    //   => O = side/2 + screenH/12 - 110
+    final bottomOffset = side / 2 + screenHeight / 12 - 110;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -61,10 +70,8 @@ class _QrScanScreenState extends State<QrScanScreen> {
           borderRadius: 12,
           borderLength: 28,
           borderWidth: 8,
-          cutOutWidth: screenWidth,
-          cutOutHeight: 220,
-          // Positive offset moves the cutout up.
-          cutOutBottomOffset: screenHeight / 12,
+          cutOutSize: side,
+          cutOutBottomOffset: bottomOffset,
         ),
       ),
     );
