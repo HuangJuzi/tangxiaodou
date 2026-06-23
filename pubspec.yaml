@@ -40,6 +40,12 @@ dependencies:
   path_provider: ^2.1.0
   image_picker: ^1.1.2
   flutter_markdown: ^0.7.6
+  gal: ^2.3.0
+  url_launcher: ^6.3.0
+  video_player: ^2.9.0
+  dio: ^5.7.0
+  flutter_secure_storage: ^9.2.2
+  mobile_scanner: ^5.2.3
 
 dependency_overrides:
   record_platform_interface: 1.4.0
@@ -54,6 +60,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -93,6 +100,10 @@ flutter:
   #       - asset: fonts/TrajanPro.ttf
   #       - asset: fonts/TrajanPro_Bold.ttf
   #         weight: 700
+
+flutter_launcher_icons:
+  android: true
+  image_path: icon.jpg
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
