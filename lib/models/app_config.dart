@@ -73,9 +73,12 @@ class BotApiBase64 {
   const BotApiBase64._();
 
   static BotApiBase64Result? parse(String input) {
+    final trimmed = input.trim();
+    final paddingNeeded = (4 - trimmed.length % 4) % 4;
+    final padded = trimmed + '=' * paddingNeeded;
     String decoded;
     try {
-      decoded = utf8.decode(base64.decode(input.trim()));
+      decoded = utf8.decode(base64.decode(padded));
     } on FormatException {
       return null;
     } on ArgumentError {
@@ -93,4 +96,11 @@ class BotApiBase64 {
     if (apiSecret == null || apiSecret.isEmpty) return null;
     return BotApiBase64Result(streamUrl: streamUrl, apiSecret: apiSecret);
   }
+}
+
+/// Masks a base64 string as `first5***last5` for display.
+/// Returns `'***'` for input shorter than 14 chars (where masking loses meaning).
+String maskBase64(String raw) {
+  if (raw.length < 14) return '***';
+  return '${raw.substring(0, 5)}***${raw.substring(raw.length - 5)}';
 }

@@ -91,6 +91,22 @@ void main() {
         expect(result.apiSecret, '7849cc4ef03a352ce36703ffa2bfc329595b478f314ff623ae3e529adb426791');
       });
 
+      test('parses base64 with missing trailing padding (common from QR generators)', () {
+        // Same payload as sampleBase64 but with trailing '==' stripped.
+        final stripped = sampleBase64.replaceAll(RegExp(r'=+$'), '');
+        expect(stripped.length % 4, isNot(0));
+        final result = BotApiBase64.parse(stripped);
+        expect(result, isNotNull);
+        expect(result!.streamUrl, contains('/bot-api/v2/dept-token/chat-stream'));
+        expect(result.apiSecret, '7849cc4ef03a352ce36703ffa2bfc329595b478f314ff623ae3e529adb426791');
+      });
+
+      test('parses base64 surrounded by whitespace', () {
+        final result = BotApiBase64.parse('  \n$sampleBase64 \t');
+        expect(result, isNotNull);
+        expect(result!.streamUrl, startsWith('https://moltbot-'));
+      });
+
       test('returns null on invalid base64', () {
         expect(BotApiBase64.parse('not-valid-base64!!!'), isNull);
       });
@@ -108,6 +124,23 @@ void main() {
       test('returns null when apiSecret missing from JSON', () {
         final raw = base64Encode(utf8.encode(jsonEncode({'streamUrl': 'u'})));
         expect(BotApiBase64.parse(raw), isNull);
+      });
+    });
+
+    group('maskBase64', () {
+      test('shows first5 + *** + last5 for typical-length input', () {
+        // 16-char string: '1234567890abcdef' has length 16
+        expect(maskBase64('1234567890abcdef'), '12345***bcdef');
+      });
+
+      test('handles boundary at exactly 14-char input (just above the *** threshold)', () {
+        // 14 chars: first5=12345, last5=0abcd → '12345***0abcd'
+        expect(maskBase64('1234567890abcd'), '12345***0abcd');
+      });
+
+      test('returns *** for input shorter than 14 chars (degenerate)', () {
+        expect(maskBase64('1234567890ab'), '***');
+        expect(maskBase64(''), '***');
       });
     });
   });
