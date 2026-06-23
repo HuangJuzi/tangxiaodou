@@ -57,6 +57,7 @@ void main() {
         asrTtsApiKey: 'apikey456',
         ttsVoice: 'longanwen',
         ttsEnabled: false,
+        botApiRawBase64: 'eyJhZ2VudElk***ifQ==',
       );
       final encoded = original.toJson();
       final decoded = AppConfig.fromJson(encoded);
@@ -65,6 +66,18 @@ void main() {
       expect(decoded.asrTtsApiKey, original.asrTtsApiKey);
       expect(decoded.ttsVoice, original.ttsVoice);
       expect(decoded.ttsEnabled, original.ttsEnabled);
+      expect(decoded.botApiRawBase64, original.botApiRawBase64);
+    });
+
+    test('fromJson tolerates missing botApiRawBase64 (backward-compat with older saved configs)', () {
+      final decoded = AppConfig.fromJson({
+        'botApiStreamUrl': 'u',
+        'botApiSecret': 's',
+        'asrTtsApiKey': 'k',
+        'ttsVoice': 'longyumi_v2',
+        'ttsEnabled': true,
+      });
+      expect(decoded.botApiRawBase64, '');
     });
 
     test('defaults creates incomplete config with default voice and tts on', () {

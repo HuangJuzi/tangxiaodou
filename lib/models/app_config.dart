@@ -6,6 +6,7 @@ class AppConfig {
   final String asrTtsApiKey;
   final String ttsVoice;
   final bool ttsEnabled;
+  final String botApiRawBase64;
 
   const AppConfig({
     required this.botApiStreamUrl,
@@ -13,6 +14,7 @@ class AppConfig {
     required this.asrTtsApiKey,
     required this.ttsVoice,
     required this.ttsEnabled,
+    this.botApiRawBase64 = '',
   });
 
   factory AppConfig.defaults() => const AppConfig(
@@ -21,6 +23,7 @@ class AppConfig {
         asrTtsApiKey: '',
         ttsVoice: 'longyumi_v2',
         ttsEnabled: true,
+        botApiRawBase64: '',
       );
 
   bool get isComplete =>
@@ -34,6 +37,7 @@ class AppConfig {
     String? asrTtsApiKey,
     String? ttsVoice,
     bool? ttsEnabled,
+    String? botApiRawBase64,
   }) =>
       AppConfig(
         botApiStreamUrl: botApiStreamUrl ?? this.botApiStreamUrl,
@@ -41,6 +45,7 @@ class AppConfig {
         asrTtsApiKey: asrTtsApiKey ?? this.asrTtsApiKey,
         ttsVoice: ttsVoice ?? this.ttsVoice,
         ttsEnabled: ttsEnabled ?? this.ttsEnabled,
+        botApiRawBase64: botApiRawBase64 ?? this.botApiRawBase64,
       );
 
   Map<String, dynamic> toJson() => {
@@ -49,6 +54,7 @@ class AppConfig {
         'asrTtsApiKey': asrTtsApiKey,
         'ttsVoice': ttsVoice,
         'ttsEnabled': ttsEnabled,
+        'botApiRawBase64': botApiRawBase64,
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -57,6 +63,7 @@ class AppConfig {
         asrTtsApiKey: json['asrTtsApiKey'] as String? ?? '',
         ttsVoice: json['ttsVoice'] as String? ?? 'longyumi_v2',
         ttsEnabled: json['ttsEnabled'] as bool? ?? true,
+        botApiRawBase64: json['botApiRawBase64'] as String? ?? '',
       );
 }
 

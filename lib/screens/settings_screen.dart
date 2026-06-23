@@ -39,10 +39,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _apiKeyCtrl = TextEditingController(text: cfg?.asrTtsApiKey ?? '');
     _voice = cfg?.ttsVoice ?? 'longyumi_v2';
     _ttsEnabled = cfg?.ttsEnabled ?? true;
-    // We don't reverse the saved config back to a base64 string; the masked
-    // display reverts to '—' on settings re-open. User re-pastes/re-scans to
-    // confirm intent before re-saving.
-    _botApiBase64 = null;
+    // Restore the raw base64 so the masked display shows on settings re-open
+    // and the save button stays enabled for voice/key-only changes.
+    final raw = cfg?.botApiRawBase64;
+    _botApiBase64 = (raw != null && raw.isNotEmpty) ? raw : null;
   }
 
   @override
@@ -107,6 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       asrTtsApiKey: _apiKeyCtrl.text.trim(),
       ttsVoice: _voice,
       ttsEnabled: _ttsEnabled,
+      botApiRawBase64: _botApiBase64!,
     );
 
     setState(() {
