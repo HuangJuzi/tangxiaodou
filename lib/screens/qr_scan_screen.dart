@@ -44,6 +44,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
+    final screenWidth = mq.size.width;
     final screenHeight = mq.size.height;
     return Scaffold(
       backgroundColor: Colors.black,
@@ -60,9 +61,9 @@ class _QrScanScreenState extends State<QrScanScreen> {
           borderRadius: 12,
           borderLength: 28,
           borderWidth: 8,
-          cutOutSize: 220,
-          // Positive offset moves the cutout up. Keeps the bottom edge of the
-          // square at the same Y as the previous 220-tall strip.
+          cutOutWidth: screenWidth,
+          cutOutHeight: 220,
+          // Positive offset moves the cutout up.
           cutOutBottomOffset: screenHeight / 12,
         ),
       ),
