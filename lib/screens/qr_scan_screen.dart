@@ -64,9 +64,9 @@ class _QrScanScreenState extends State<QrScanScreen> {
           borderWidth: 8,
           cutOutWidth: screenWidth,
           cutOutHeight: 220,
-          // Positive offset moves the cutout up; screenHeight/3 puts the
-          // strip's center in the upper third.
-          cutOutBottomOffset: screenHeight / 3,
+          // Positive offset moves the cutout up; net upshift = 1/3 - 1/4 = 1/12
+          // of screen height (originally up 1/3, then down 1/4 per user feedback).
+          cutOutBottomOffset: screenHeight / 12,
         ),
       ),
     );
