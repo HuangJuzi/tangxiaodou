@@ -1,41 +1,95 @@
 import 'package:flutter/material.dart';
 import 'theme.dart';
+import 'models/app_config.dart';
 import 'services/llm_service.dart';
 import 'services/asr_service.dart';
 import 'services/tts_service.dart';
+import 'services/oss_service.dart';
+import 'services/settings_service.dart';
 import 'screens/chat_screen.dart';
+import 'screens/settings_screen.dart';
 
-const _llmUrl = 'https://moltbot-0014c62b7c7947c3.sophnet.com';
-const _llmAccountId = 'parent-toddler';
-const _llmSecret = 'oz8hIK-JMuNzIajz5KE50MI3XqgtT_5J';
-const _apiKey = 'WGT8fpUL1g0kJkyZ-sdKGVHHHd_oPmfaPCCg06-I0-6GMzFyAiOVlKY6ZbnA6o8nPV97c-quDei6Hzh-7Pq6qw';
-
-void main() {
-  runApp(const BellaApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final settings = SettingsService();
+  await settings.load();
+  runApp(BellaApp(settings: settings));
 }
 
-class BellaApp extends StatelessWidget {
-  const BellaApp({super.key});
+class BellaApp extends StatefulWidget {
+  final SettingsService settings;
+  const BellaApp({required this.settings, super.key});
+
+  @override
+  State<BellaApp> createState() => _BellaAppState();
+}
+
+class _BellaAppState extends State<BellaApp> {
+  late LlmService _llmService;
+  late AsrService _asrService;
+  late TtsService _ttsService;
+  late OssService _ossService;
+
+  @override
+  void initState() {
+    super.initState();
+    _buildServices(widget.settings.config);
+    widget.settings.addListener(_onSettingsChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.settings.removeListener(_onSettingsChanged);
+    _disposeServices();
+    super.dispose();
+  }
+
+  void _buildServices(AppConfig? cfg) {
+    _llmService = LlmService(
+      config: LlmConfig(
+        streamUrl: cfg?.botApiStreamUrl ?? '',
+        apiSecret: cfg?.botApiSecret ?? '',
+      ),
+    );
+    _asrService = AsrService(apiKey: cfg?.asrTtsApiKey ?? '');
+    _ttsService = TtsService(
+      apiKey: cfg?.asrTtsApiKey ?? '',
+      voice: cfg?.ttsVoice ?? 'longyumi_v2',
+    );
+    _ossService = OssService(apiKey: cfg?.asrTtsApiKey ?? '');
+  }
+
+  void _disposeServices() {
+    _llmService.dispose();
+  }
+
+  void _onSettingsChanged() {
+    _disposeServices();
+    _buildServices(widget.settings.config);
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
-    final llmService = LlmService(
-      config: LlmConfig(
-        baseUrl: _llmUrl,
-        accountId: _llmAccountId,
-        apiSecret: _llmSecret,
-      ),
-    );
+    final cfg = widget.settings.config;
+    final showSettings = cfg == null || !cfg.isComplete;
 
     return MaterialApp(
-      title: '豆豆',
+      title: '糖小豆',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: ChatScreen(
-        llmService: llmService,
-        asrService: AsrService(apiKey: _apiKey),
-        ttsService: TtsService(apiKey: _apiKey, voice: 'longanwen'),
-      ),
+      home: showSettings
+          ? SettingsScreen(
+              settingsService: widget.settings,
+              isFirstLaunch: true,
+            )
+          : ChatScreen(
+              llmService: _llmService,
+              asrService: _asrService,
+              ttsService: _ttsService,
+              ossService: _ossService,
+              settingsService: widget.settings,
+            ),
     );
   }
 }

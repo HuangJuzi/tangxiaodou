@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -11,18 +13,25 @@ import '../theme.dart';
 import '../services/llm_service.dart';
 import '../services/asr_service.dart';
 import '../services/tts_service.dart';
+import '../services/tts_player.dart';
+import '../services/oss_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/chat_bubble.dart';
-
+import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final LlmService llmService;
   final AsrService asrService;
   final TtsService ttsService;
+  final OssService ossService;
+  final SettingsService settingsService;
 
   const ChatScreen({
     required this.llmService,
     required this.asrService,
     required this.ttsService,
+    required this.ossService,
+    required this.settingsService,
     super.key,
   });
 
@@ -34,34 +43,83 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<Message> _messages = [];
   bool _isRecording = false;
   bool _isProcessingVoice = false;
-  String? _playingMessageId;
   bool _isTextMode = false;
+  bool _isSending = false;
+  bool _isUploading = false;
+  bool _showScrollBtn = false;
+  int _displayCount = 20;
+  bool _loadingMore = false;
+  String? _autoPlayMessageId;
+  bool _ttsEnabled = true;
+  String? _pendingImagePath;
+  Timer? _flushTimer;
   final _pendingText = StringBuffer();
-  final List<_TtsJob> _ttsQueue = [];
-  int _ttsGen = 0;
-  bool _isPlayingTts = false;
+  final _ttsBuffer = StringBuffer();
+
+  late final TtsPlayer _ttsPlayer;
 
   final _scrollController = ScrollController();
   final _textController = TextEditingController();
   final _audioRecorder = AudioRecorder();
   final _audioPlayer = AudioPlayer();
-  final _senderId = 'user-${DateTime.now().millisecondsSinceEpoch}';
+  final _senderId = 'zhiyi.huang';
 
   @override
   void initState() {
     super.initState();
+    _ttsEnabled = widget.settingsService.config?.ttsEnabled ?? true;
+    _ttsPlayer = TtsPlayer(ttsService: widget.ttsService, audioPlayer: _audioPlayer, onStateChanged: () {
+      if (mounted) setState(() {});
+    });
     _loadMessages().then((_) {
       if (_messages.isEmpty) {
-        _messages.add(Message(
-          role: MessageRole.ai,
-          content: '你好呀！我是豆豆~ 今天过得怎么样？',
-        ));
+        setState(() {
+          _messages.add(Message(
+            role: MessageRole.ai,
+            content: '你好呀！我是糖小豆~ 今天过得怎么样？',
+          ));
+        });
       }
+      _scrollToBottom();
+    });
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final atBottom = _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 100;
+    if (atBottom != !_showScrollBtn) {
+      setState(() => _showScrollBtn = !atBottom);
+    }
+    if (_scrollController.position.pixels <= 200 && !_loadingMore) {
+      _loadMore();
+    }
+  }
+
+  void _loadMore() {
+    if (_displayCount >= _messages.length || _loadingMore) return;
+    _loadingMore = true;
+    final oldPixels = _scrollController.position.pixels;
+    final oldMax = _scrollController.position.maxScrollExtent;
+    setState(() {
+      _displayCount = (_displayCount + 20).clamp(0, _messages.length);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        final newMax = _scrollController.position.maxScrollExtent;
+        final delta = newMax - oldMax;
+        if (delta.abs() > 0.5) {
+          _scrollController.jumpTo(oldPixels + delta);
+        }
+      }
+      _loadingMore = false;
     });
   }
 
   @override
   void dispose() {
+    _flushTimer?.cancel();
     _scrollController.dispose();
     _textController.dispose();
     _audioRecorder.dispose();
@@ -71,13 +129,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
+      if (!_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     });
   }
 
@@ -91,11 +144,14 @@ class _ChatScreenState extends State<ChatScreen> {
       final file = File(await _messagesPath);
       if (!await file.exists()) return;
       final json = jsonDecode(await file.readAsString()) as List<dynamic>;
-      final messages = json
+      final all = json
           .map((m) => Message.fromJson(m as Map<String, dynamic>))
           .toList();
-      if (messages.isNotEmpty) {
-        setState(() => _messages.addAll(messages));
+      if (all.isNotEmpty) {
+        setState(() {
+          _messages.addAll(all);
+          _displayCount = _messages.length > 20 ? 20 : _messages.length;
+        });
       }
     } on FormatException {
       // corrupted file, ignore
@@ -109,120 +165,227 @@ class _ChatScreenState extends State<ChatScreen> {
 
 
 
-  Future<void> _sendMessage(String text) async {
+  Future<void> _sendMessage(String text, {String? imagePath}) async {
+    if (_isSending) return;
+    setState(() => _isSending = true);
+    final pendingPath = imagePath ?? _pendingImagePath;
+    String? ossUrl;
+    if (pendingPath != null) {
+      setState(() => _isUploading = true);
+      try {
+        ossUrl = await widget.ossService.upload(pendingPath);
+      } catch (_) {
+        ossUrl = null;
+      }
+      if (ossUrl == null) {
+        if (mounted) {
+          setState(() {
+            _isUploading = false;
+            _isSending = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('图片上传失败，请重试')),
+          );
+        }
+        return;
+      }
+      setState(() => _isUploading = false);
+    }
+    final llmText = ossUrl == null ? text : '$text\n\n原始图片链接：$ossUrl';
+
+    _flushTimer?.cancel();
+    _autoPlayMessageId = null;
+    _ttsPlayer.stop();
     setState(() {
-      _messages.add(Message(role: MessageRole.user, content: text));
+      _messages.add(Message(role: MessageRole.user, content: text, imagePath: pendingPath));
+      _pendingImagePath = null;
     });
-    _saveMessages();
+    await _saveMessages();
     _scrollToBottom();
 
     final aiMessage = Message(role: MessageRole.ai, content: '', isStreaming: true);
+    _autoPlayMessageId = aiMessage.id;
     setState(() => _messages.add(aiMessage));
     _scrollToBottom();
 
+    final myMsgId = aiMessage.id;
     final buffer = StringBuffer();
-    final delimRe = RegExp(r'[,，。！？~…!?\n]');
-    try {
-      await for (final token in widget.llmService.chat(_senderId, text)) {
-        buffer.write(token);
-        _pendingText.write(token);
-        setState(() {
-          aiMessage.content = buffer.toString();
-        });
-        _scrollToBottom();
+    final delimRe = RegExp(r'[，,。.！？!?；;]');
+    final sentDelim = RegExp(r'[。.！？!?]');
+    final speakableRe = RegExp(r'[一-鿿a-zA-Z0-9]');
+    final toolCallBlockRe = RegExp(r'🛠️.*?\(agent\)', dotAll: true);
+    bool _ttsInToolCall = false;
 
-        var pending = _pendingText.toString();
-        _pendingText.clear();
-        while (pending.isNotEmpty) {
-          final delim = delimRe.firstMatch(pending);
-          if (delim == null) break;
-          _enqueueTts(pending.substring(0, delim.end));
-          pending = pending.substring(delim.end);
+    String stripToolCall(String s) {
+      // Strip completed 🛠️ ... (agent) blocks.  Use the display-side
+      // variant that also strips an unclosed 🛠️… suffix.
+      return s.replaceAll(RegExp(r'🛠️.*?(?:\(agent\)|$)', dotAll: true), '');
+    }
+
+    /// Drain [_ttsBuffer] into text that is safe to feed into TTS chunking.
+    /// While streaming ([flushAll] false) an unclosed 🛠️ marker and any
+    /// still-arriving URL/path/filename at the tail are pushed back into
+    /// [_ttsBuffer] for later completion. On final flush ([flushAll] true) no
+    /// tail is held back so the last word is never stuck. In both cases
+    /// complete links/paths are removed and file-name dots become 点 before
+    /// chunking, so the delimiter splitter can't break them into fragments.
+    String _drainTtsBuffer({bool flushAll = false}) {
+      var text = _ttsBuffer.toString();
+      _ttsBuffer.clear();
+      // Strip complete tool-call announcements first
+      text = text.replaceAll(toolCallBlockRe, '');
+      if (flushAll) {
+        // Drop a trailing unclosed tool-call marker (don't speak it)
+        text = text.replaceAll(RegExp(r'🛠️.*$', dotAll: true), '');
+      } else {
+        // Hold back from the earliest of: an unclosed 🛠️ marker, or a
+        // still-arriving URL/path/filename at the tail. A single contiguous
+        // push-back keeps the held text in original order.
+        int holdAt = text.length;
+        final toolIdx = text.indexOf('🛠️');
+        if (toolIdx >= 0) holdAt = toolIdx;
+        final tailIdx = TtsPlayer.inProgressTail(text.substring(0, holdAt));
+        if (tailIdx >= 0) holdAt = tailIdx;
+        if (holdAt < text.length) {
+          _ttsBuffer.write(text.substring(holdAt));
+          text = text.substring(0, holdAt);
         }
-        _pendingText.write(pending);
       }
-      if (_pendingText.isNotEmpty) {
-        _enqueueTts(_pendingText.toString());
+      // Remove complete links/paths and protect file-name dots before chunking
+      text = TtsPlayer.stripLinksAndPaths(text);
+      text = TtsPlayer.protectDots(text);
+      return text;
+    }
+
+    // Put unflushed [remainder] back ahead of any tail already held in
+    // [_ttsBuffer], so streamed text keeps its original order.
+    void _pushBackTts(String remainder) {
+      final held = _ttsBuffer.toString();
+      _ttsBuffer.clear();
+      _ttsBuffer.write(remainder);
+      _ttsBuffer.write(held);
+    }
+
+    bool isActive() => _autoPlayMessageId == myMsgId && _ttsEnabled;
+
+    void _enqueueTts(String chunk) {
+      if (isActive()) _ttsPlayer.enqueue(chunk);
+    }
+    int _tokenCount = 0;
+    try {
+      debugPrint('[SEND] entering await for loop');
+      await for (final token in widget.llmService.chat(_senderId, llmText)) {
+        _tokenCount++;
+        buffer.write(token);
+
+        // Collect raw token text; a helper below filters out tool-call
+        // portions before they enter the TTS pipeline.
+        _pendingText.write(token);
+
+        final display = stripToolCall(buffer.toString());
+        setState(() {
+          aiMessage.content = display;
+        });
+        if (!_showScrollBtn) {
+          _scrollToBottom();
+        }
+
+        _ttsBuffer.write(_pendingText.toString());
         _pendingText.clear();
+
+        var buf = _drainTtsBuffer();
+
+        while (buf.isNotEmpty) {
+          final matches = delimRe.allMatches(buf).toList();
+          if (matches.isEmpty) {
+            _pushBackTts(buf);
+            _flushTimer?.cancel();
+            _flushTimer = Timer(const Duration(seconds: 2), () {
+              final tail = _drainTtsBuffer(flushAll: true);
+              if (tail.isNotEmpty) _enqueueTts(tail);
+            });
+            break;
+          }
+          bool flushed = false;
+          for (final m in matches) {
+            final isSent = sentDelim.hasMatch(m.group(0)!);
+            final speakableCount = speakableRe.allMatches(buf.substring(0, m.start)).length;
+            if (isSent || speakableCount >= 50) {
+              _enqueueTts(buf.substring(0, m.end));
+              _flushTimer?.cancel();
+              buf = buf.substring(m.end);
+              flushed = true;
+              break;
+            }
+          }
+          if (!flushed) {
+            _pushBackTts(buf);
+            _flushTimer?.cancel();
+            _flushTimer = Timer(const Duration(seconds: 2), () {
+              final tail = _drainTtsBuffer(flushAll: true);
+              if (tail.isNotEmpty) _enqueueTts(tail);
+            });
+            break;
+          }
+        }
+      }
+      // Drain any remaining buffered text
+      var finalText = _drainTtsBuffer(flushAll: true);
+      _flushTimer?.cancel();
+      while (finalText.isNotEmpty) {
+        _enqueueTts(finalText);
+        finalText = _drainTtsBuffer(flushAll: true);
+        // At this point there should be no more pending tool-call text
+        // because the stream is done, so any remnant can be drained once.
+        break;
       }
     } on HttpException {
+      debugPrint('[SEND] HttpException, buffer empty=${buffer.isEmpty}, tokens=$_tokenCount');
       setState(() {
-        aiMessage.content = buffer.isEmpty ? '网络断了，请重试' : '${buffer.toString()}...';
+        aiMessage.content = buffer.isEmpty ? '网络断了，请重试' : '${stripToolCall(buffer.toString())}...';
       });
     } catch (e) {
+      debugPrint('[SEND] catch error: $e (${e.runtimeType}), buffer empty=${buffer.isEmpty}, tokens=$_tokenCount');
       setState(() {
-        aiMessage.content = buffer.isEmpty ? '出错了，请重试' : '${buffer.toString()}...';
+        aiMessage.content = buffer.isEmpty ? '出错了，请重试' : '${stripToolCall(buffer.toString())}...';
       });
     } finally {
+      debugPrint('[SEND] finally, tokens=$_tokenCount');
+      _flushTimer?.cancel();
+      var tail = _drainTtsBuffer(flushAll: true);
+      while (tail.isNotEmpty) {
+        _enqueueTts(tail);
+        tail = _drainTtsBuffer(flushAll: true);
+      }
       setState(() {
         aiMessage.isStreaming = false;
+        _isSending = false;
       });
-      _saveMessages();
+      await _saveMessages();
       _scrollToBottom();
     }
   }
 
-  Future<void> _playTts(Message message) async {
-    setState(() => _playingMessageId = message.id);
-    try {
-      final audioBytes = await widget.ttsService.synthesize(message.content);
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/tts_${message.id}.mp3');
-      await file.writeAsBytes(audioBytes);
-      await _audioPlayer.play(DeviceFileSource(file.path));
-      _audioPlayer.onPlayerComplete.listen((_) {
-        if (mounted) setState(() => _playingMessageId = null);
-      });
-    } catch (_) {
-      if (mounted) setState(() => _playingMessageId = null);
-    }
+  void _playTts(Message message) {
+    if (!_ttsEnabled) return;
+    _ttsPlayer.playFull(message);
   }
 
-  void _enqueueTts(String text) {
-    final gen = _ttsGen;
-    final idx = _ttsQueue.length;
-    _ttsQueue.add(_TtsJob(text: text, gen: gen));
-    widget.ttsService.synthesize(text).then((bytes) {
-      if (gen != _ttsGen) return;
-      if (idx < _ttsQueue.length) {
-        _ttsQueue[idx].bytes = bytes;
-      }
-      _playNextInQueue();
-    });
-  }
-
-  void _playNextInQueue() {
-    if (_isPlayingTts) return;
-
-    while (_ttsQueue.isNotEmpty && _ttsQueue.first.bytes != null) {
-      final job = _ttsQueue.removeAt(0);
-      if (job.gen != _ttsGen) continue;
-
-      _isPlayingTts = true;
-      _playTtsBytes(job.bytes!).then((_) {
-        _isPlayingTts = false;
-        _playNextInQueue();
-      });
-      return;
-    }
-  }
-
-  Future<void> _playTtsBytes(List<int> bytes) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/tts_stream_${DateTime.now().millisecondsSinceEpoch}.mp3');
-      await file.writeAsBytes(bytes);
-      await _audioPlayer.play(DeviceFileSource(file.path));
-      await _audioPlayer.onPlayerComplete.first;
-    } catch (_) {}
+  void _hardstop() {
+    _flushTimer?.cancel();
+    _autoPlayMessageId = null;
+    _ttsPlayer.stop();
+    // chat() internally cancels the previous request's CancelToken,
+    // so /hardstop is sent on a fresh connection.
+    widget.llmService.chat(_senderId, '/hardstop').listen((_) {});
   }
 
   void _onRecordStart() async {
-    _ttsGen++;
-    _ttsQueue.clear();
+    _flushTimer?.cancel();
+    _autoPlayMessageId = null;
+    _ttsPlayer.stop();
     _pendingText.clear();
-    _isPlayingTts = false;
-    _audioPlayer.stop();
+    _ttsBuffer.clear();
 
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
@@ -234,9 +397,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    HapticFeedback.lightImpact();
+    final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.pcm';
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc),
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+      ),
       path: path,
     );
     setState(() => _isRecording = true);
@@ -258,7 +426,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (mounted && text.isNotEmpty) {
         setState(() => _isProcessingVoice = false);
-        await _sendMessage(text);
+        await _sendMessage(text, imagePath: _pendingImagePath);
       } else if (mounted) {
         setState(() => _isProcessingVoice = false);
       }
@@ -278,6 +446,7 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Row(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             _NavDot(color: AppColors.primary, size: 7),
             SizedBox(width: 4),
@@ -285,10 +454,51 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         centerTitle: true,
-        toolbarHeight: 36,
+        toolbarHeight: 44,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         elevation: 0,
+        actions: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              final wasPlaying =
+                  _ttsPlayer.isPlaying || _ttsPlayer.isAutoPlaying;
+              if (wasPlaying) {
+                _ttsPlayer.stop();
+              }
+              final cfg = widget.settingsService.config;
+              if (cfg == null) return;
+              final newCfg = cfg.copyWith(ttsEnabled: !_ttsEnabled);
+              widget.settingsService.save(newCfg);
+              setState(() => _ttsEnabled = !_ttsEnabled);
+            },
+            child: Padding(
+              padding: const EdgeInsets.only(right: 14),
+              child: Icon(
+                _ttsEnabled ? Icons.volume_up : Icons.volume_off,
+                size: 24,
+                color: _ttsEnabled ? AppColors.primaryLight : const Color(0xFFBDBDBD),
+              ),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(
+                    settingsService: widget.settingsService,
+                  ),
+                ),
+              );
+            },
+            child: const Padding(
+              padding: EdgeInsets.only(right: 14),
+              child: Icon(Icons.settings, size: 24, color: AppColors.primaryLight),
+            ),
+          ),
+        ],
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
           child: ColoredBox(color: Color(0xFFF0E6F6)),
@@ -297,21 +507,77 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-              itemCount: _messages.length,
-              itemBuilder: (_, i) => ChatBubble(
-                message: _messages[i],
-                onTtsTap: () {
-                  if (_messages[i].role == MessageRole.ai &&
-                      !_messages[i].isStreaming) {
-                    _playTts(_messages[i]);
-                  }
+            child: Stack(
+              children: [
+                ListView.builder(
+                  controller: _scrollController,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+                  itemCount: _displayCount < _messages.length ? _displayCount : _messages.length,
+                  itemBuilder: (_, i) {
+                    final idx = _messages.length - (_displayCount < _messages.length ? _displayCount : _messages.length) + i;
+                    final msg = _messages[idx];
+                    return ChatBubble(
+                      message: msg,
+                      onTtsTap: () {
+                        if (msg.role == MessageRole.ai && !msg.isStreaming) {
+                          _playTts(msg);
+                        }
+                      },
+                    playingMessageId: _ttsPlayer.playingMessageId,
+                    onStopTts: _ttsPlayer.stop,
+                    isTtsAutoPlaying: _ttsPlayer.isAutoPlaying && msg.id == _autoPlayMessageId,
+                  );
                 },
-                playingMessageId: _playingMessageId,
               ),
+                Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: !_showScrollBtn,
+                      child: AnimatedOpacity(
+                        opacity: _showScrollBtn ? 1 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() {});
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (_scrollController.hasClients) {
+                                _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+                              }
+                            });
+                          },
+                          child: Container(
+                            height: 30,
+                            margin: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFE1BEE7), width: 1.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            alignment: Alignment.center,
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('↓', style: TextStyle(fontSize: 14, color: AppColors.primary)),
+                                SizedBox(width: 3),
+                                Text('最新', style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           _buildInputArea(),
@@ -320,72 +586,220 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  static const _commands = ['/compact', '/new', '/hardstop'];
+
+  Future<void> _pickImage({ImageSource source = ImageSource.gallery}) async {
+    try {
+      final picker = ImagePicker();
+      final xfile = await picker.pickImage(
+        source: source,
+        maxWidth: 1080,
+        maxHeight: 1080,
+        imageQuality: 85,
+      );
+      if (xfile == null) return;
+      final dir = await getApplicationDocumentsDirectory();
+      final dest = '${dir.path}/image_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await File(xfile.path).copy(dest);
+      if (mounted) setState(() => _pendingImagePath = dest);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(source == ImageSource.camera ? '拍照失败' : '选择图片失败')),
+        );
+      }
+    }
+  }
+
+  void _clearPendingImage() {
+    setState(() => _pendingImagePath = null);
+  }
+
   Widget _buildInputArea() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFEDE7F6))),
-      ),
-      child: _isTextMode ? _buildTextInput() : _buildVoiceInput(),
+    final input = _textController.text.trim();
+    final showCommands = _isTextMode && input.startsWith('/') && !input.contains(' ');
+    var filtered = _commands.where((c) => c.startsWith(input)).toList();
+    if (input == '/') filtered = _commands;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_pendingImagePath != null)
+          Container(
+            width: double.infinity,
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(_pendingImagePath!),
+                    width: 64,
+                    height: 64,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    '已选择图片，发送时将上传',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _clearPendingImage,
+                  behavior: HitTestBehavior.opaque,
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 18, color: Color(0xFF888888)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+          child: (showCommands && filtered.isNotEmpty)
+              ? Container(
+                  width: double.infinity,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: Color(0xFFEDE7F6))),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: filtered.map((c) {
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: GestureDetector(
+                          onTap: () {
+                            _textController.clear();
+                            _sendMessage(c);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryBg,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: AppColors.primaryLight, width: 1),
+                            ),
+                            child: Text(c, style: const TextStyle(fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w500)),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                )
+              : const SizedBox(width: double.infinity, height: 0),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Color(0xFFEDE7F6))),
+          ),
+          child: _isTextMode ? _buildTextInput() : _buildVoiceInput(),
+        ),
+      ],
     );
   }
 
   Widget _buildVoiceInput() {
     return Row(
       children: [
+        GestureDetector(
+          onTap: () => setState(() => _isTextMode = true),
+          child: Container(
+            width: 48,
+            height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3E5F5),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            alignment: Alignment.center,
+            child: const Text('⌨', style: TextStyle(fontSize: 18)),
+          ),
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: GestureDetector(
             onLongPressStart: (_) => _onRecordStart(),
             onLongPressEnd: (_) => _onRecordStop(),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              height: 44,
-              decoration: BoxDecoration(
-                gradient: _isRecording
-                    ? const LinearGradient(colors: [Color(0xFFE53935), Color(0xFFEF5350)])
-                    : const LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]),
-                borderRadius: BorderRadius.circular(22),
-                boxShadow: [
-                  BoxShadow(
-                    color: (_isRecording ? const Color(0xFFE53935) : AppColors.primary).withValues(alpha: 0.25),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              alignment: Alignment.center,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _isRecording ? '●' : '🎤',
-                    style: const TextStyle(fontSize: 16),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _isProcessingVoice ? '识别中...' : (_isRecording ? '松开发送' : '按住说话'),
-                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
-                  ),
-                ],
+            child: AnimatedScale(
+              scale: _isRecording ? 0.96 : 1.0,
+              duration: const Duration(milliseconds: 100),
+              curve: Curves.easeOut,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                height: 44,
+                decoration: BoxDecoration(
+                  gradient: _isRecording
+                      ? const LinearGradient(colors: [Color(0xFFE53935), Color(0xFFEF5350)])
+                      : const LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]),
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (_isRecording ? const Color(0xFFE53935) : AppColors.primary).withValues(alpha: 0.25),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _isRecording ? '●' : '🎤',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _isProcessingVoice ? '识别中...' : (_isRecording ? '松开发送' : '按住说话'),
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        GestureDetector(
-          onTap: () => setState(() => _isTextMode = true),
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: const BoxDecoration(
-              color: Color(0xFFF3E5F5),
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: const Text('⌨', style: TextStyle(fontSize: 16)),
-          ),
-        ),
+        _isSending
+            ? _SendButton(isSending: true, onTap: _hardstop)
+            : GestureDetector(
+                onTap: _isUploading ? null : () => _pickImage(),
+                onLongPress: _isUploading ? null : () => _pickImage(source: ImageSource.camera),
+                child: Container(
+                  width: 48,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: _pendingImagePath != null
+                        ? AppColors.primaryLight
+                        : const Color(0xFFF3E5F5),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  alignment: Alignment.center,
+                  child: _isUploading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(
+                          Icons.add_photo_alternate_outlined,
+                          size: 22,
+                          color: _pendingImagePath != null
+                              ? Colors.white
+                              : AppColors.primary,
+                        ),
+                ),
+              ),
       ],
     );
   }
@@ -396,14 +810,14 @@ class _ChatScreenState extends State<ChatScreen> {
         GestureDetector(
           onTap: () => setState(() => _isTextMode = false),
           child: Container(
-            width: 34,
-            height: 34,
-            decoration: const BoxDecoration(
-              color: Color(0xFFF3E5F5),
-              shape: BoxShape.circle,
+            width: 48,
+            height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3E5F5),
+              borderRadius: BorderRadius.circular(14),
             ),
             alignment: Alignment.center,
-            child: const Text('🎤', style: TextStyle(fontSize: 16)),
+            child: const Text('🎤', style: TextStyle(fontSize: 18)),
           ),
         ),
         const SizedBox(width: 8),
@@ -417,11 +831,63 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: TextField(
               controller: _textController,
-              decoration: const InputDecoration(
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
                 hintText: '说点什么...',
                 border: InputBorder.none,
                 contentPadding:
-                    EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    const EdgeInsetsDirectional.fromSTEB(4, 12, 18, 12),
+                prefixIcon: _pendingImagePath != null
+                    ? Padding(
+                        padding: const EdgeInsetsDirectional.only(end: 10),
+                        child: GestureDetector(
+                          onTap: _clearPendingImage,
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(_pendingImagePath!),
+                                  width: 32,
+                                  height: 32,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              const Positioned(
+                                right: -2,
+                                top: -2,
+                                child: CircleAvatar(
+                                  radius: 7,
+                                  backgroundColor: Colors.black54,
+                                  child: Icon(Icons.close,
+                                      size: 10, color: Colors.white),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 28, minHeight: 28),
+                        visualDensity: VisualDensity.compact,
+                        icon: _isUploading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: AppColors.primary),
+                              )
+                            : const Icon(Icons.add_photo_alternate_outlined,
+                                size: 22, color: AppColors.primary),
+                        onPressed: _isUploading ? null : () => _pickImage(),
+                        onLongPress: _isUploading
+                            ? null
+                            : () => _pickImage(source: ImageSource.camera),
+                      ),
+                prefixIconConstraints:
+                    const BoxConstraints(minWidth: 25, minHeight: 25),
               ),
               style: const TextStyle(fontSize: 14),
               onSubmitted: (text) {
@@ -434,45 +900,91 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        GestureDetector(
+        _SendButton(
+          isSending: _isSending,
           onTap: () {
-            final text = _textController.text.trim();
-            if (text.isNotEmpty) {
-              _sendMessage(text);
-              _textController.clear();
+            if (_isSending) {
+              _hardstop();
+            } else {
+              final text = _textController.text.trim();
+              if (text.isNotEmpty) {
+                _sendMessage(text);
+                _textController.clear();
+              }
             }
           },
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [AppColors.primary, AppColors.primaryLight],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x4D9C27B0),
-                  blurRadius: 12,
-                  offset: Offset(0, 3),
-                ),
-              ],
-            ),
-            alignment: Alignment.center,
-            child:
-                const Text('→', style: TextStyle(color: Colors.white, fontSize: 18)),
-          ),
         ),
       ],
     );
   }
 }
 
-class _TtsJob {
-  final String text;
-  final int gen;
-  List<int>? bytes;
-  _TtsJob({required this.text, required this.gen});
+class _SendButton extends StatefulWidget {
+  final bool isSending;
+  final VoidCallback onTap;
+  const _SendButton({required this.isSending, required this.onTap});
+
+  @override
+  State<_SendButton> createState() => _SendButtonState();
+}
+
+class _SendButtonState extends State<_SendButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 100));
+    _scaleAnim = Tween<double>(begin: 1, end: 0.92).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => _controller.forward(),
+      onTapUp: (_) {
+        _controller.reverse();
+        widget.onTap();
+      },
+      onTapCancel: () => _controller.reverse(),
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (_, child) => Transform.scale(scale: _scaleAnim.value, child: child),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: 48,
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: widget.isSending ? const Color(0xFFE53935) : null,
+            gradient: widget.isSending ? null : const LinearGradient(
+              colors: [AppColors.primary, AppColors.primaryLight],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: (widget.isSending ? const Color(0xFFE53935) : AppColors.primary).withValues(alpha: 0.3),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            widget.isSending ? '停止' : '发送',
+            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _NavDot extends StatelessWidget {
