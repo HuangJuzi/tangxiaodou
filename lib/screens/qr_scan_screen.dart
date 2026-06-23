@@ -1,5 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
 
 /// Full-screen QR scanner. Returns the scanned raw string via Navigator.pop.
 class QrScanScreen extends StatefulWidget {
@@ -10,33 +11,42 @@ class QrScanScreen extends StatefulWidget {
 }
 
 class _QrScanScreenState extends State<QrScanScreen> {
-  late final MobileScannerController _controller;
+  final GlobalKey _qrKey = GlobalKey(debugLabel: 'QR');
+  QRViewController? _controller;
   bool _returned = false;
 
   @override
-  void initState() {
-    super.initState();
-    _controller = MobileScannerController();
+  void reassemble() {
+    super.reassemble();
+    if (Platform.isAndroid) {
+      _controller?.pauseCamera();
+    }
+    _controller?.resumeCamera();
   }
 
   @override
   void dispose() {
-    _controller.dispose();
     super.dispose();
   }
 
-  void _onDetect(BarcodeCapture capture) {
-    if (_returned) return;
-    final barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
-    final raw = barcodes.first.rawValue;
-    if (raw == null || raw.isEmpty) return;
-    _returned = true;
-    Navigator.of(context).pop(raw);
+  void _onViewCreated(QRViewController controller) {
+    _controller = controller;
+    controller.scannedDataStream.listen((barcode) {
+      if (_returned) return;
+      final code = barcode.code;
+      if (code == null || code.isEmpty) return;
+      _returned = true;
+      if (!mounted) return;
+      Navigator.of(context).pop(code);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    // Full-width horizontal strip, positioned in the upper third of the screen.
+    final screenWidth = mq.size.width;
+    final screenHeight = mq.size.height;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -44,9 +54,20 @@ class _QrScanScreenState extends State<QrScanScreen> {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
       ),
-      body: MobileScanner(
-        controller: _controller,
-        onDetect: _onDetect,
+      body: QRView(
+        key: _qrKey,
+        onQRViewCreated: _onViewCreated,
+        overlay: QrScannerOverlayShape(
+          borderColor: Colors.white,
+          borderRadius: 12,
+          borderLength: 28,
+          borderWidth: 8,
+          cutOutWidth: screenWidth,
+          cutOutHeight: 220,
+          // Positive offset moves the cutout up; screenHeight/3 puts the
+          // strip's center in the upper third.
+          cutOutBottomOffset: screenHeight / 3,
+        ),
       ),
     );
   }
