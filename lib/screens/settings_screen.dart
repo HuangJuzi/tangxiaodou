@@ -52,7 +52,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _apiSecretCtrl.text.trim().isNotEmpty &&
       _apiKeyCtrl.text.trim().isNotEmpty;
 
-  Future<void> _applyBase64(String raw) async {
+  void _applyBase64(String raw) {
     final parsed = BotApiBase64.parse(raw);
     if (parsed == null) {
       if (!mounted) return;
@@ -77,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
       return;
     }
-    await _applyBase64(text);
+    _applyBase64(text);
   }
 
   Future<void> _scanQr() async {
@@ -85,7 +85,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       MaterialPageRoute(builder: (_) => const QrScanScreen()),
     );
     if (result == null || result.isEmpty) return;
-    await _applyBase64(result);
+    if (!mounted) return;
+    _applyBase64(result);
   }
 
   Future<void> _save() async {
@@ -97,9 +98,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ttsVoice: _voice,
       ttsEnabled: _ttsEnabled,
     );
-    await widget.settingsService.save(cfg);
+    try {
+      await widget.settingsService.save(cfg);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
     if (!mounted) return;
-    setState(() => _saving = false);
     if (widget.isFirstLaunch) {
       // SettingsService.notifyListeners will rebuild BellaApp into ChatScreen.
       return;
