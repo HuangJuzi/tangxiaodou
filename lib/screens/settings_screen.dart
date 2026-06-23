@@ -125,7 +125,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final botApiOk = results[0] as bool;
     final ttsBytes = results[1] as List<int>?;
 
-    if (!botApiOk) failures.add('Bot-API');
+    if (!botApiOk) failures.add('Bot API');
     if (ttsBytes == null) {
       failures.add('TTS');
     } else {
@@ -262,7 +262,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         body: ListView(
           padding: const EdgeInsets.only(bottom: 100),
           children: [
-            _sectionTitle('Bot-API'),
+            _sectionTitle('Sophclaw Bot API'),
             Container(
               color: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -305,7 +305,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-            _sectionTitle('ASR / TTS API Key'),
+            _sectionTitle('Sophnet API Key'),
             Container(
               color: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
