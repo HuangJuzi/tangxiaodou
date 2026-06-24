@@ -1,7 +1,0 @@
-{"type":"server-started","port":51713,"host":"0.0.0.0","url_host":"localhost","url":"http://localhost:51713","screen_dir":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/content","state_dir":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/state"}
-{"type":"screen-added","file":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/content/visual-style.html"}
-{"type":"screen-added","file":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/content/visual-style-v2.html"}
-{"type":"screen-added","file":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/content/waiting.html"}
-{"type":"screen-added","file":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/content/preview.html"}
-{"type":"screen-added","file":"/mnt/b/workdir/gitlab/Bella/.superpowers/brainstorm/3687859-1781614253/content/preview-v2.html"}
-{"type":"server-stopped","reason":"idle timeout"}
