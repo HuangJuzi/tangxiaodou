@@ -19,26 +19,34 @@
 
 ## 方案
 
-采用方案 A：在切分前 hold-back 未结束的链接/路径，避免产生碎片；完整的链接/路径由 `sanitize` 整条删除。
+采用方案 A：在切分前 hold-back 未结束的链接/路径/文件名，并对**已完整**的部分先删链接、把文件名的 `.` 转成 `点`，再交给切分器；这样切分器既拿不到半截链接，也拿不到可被拆开的 `.`。
+
+> 实现细化（相对初版 spec）：仅靠 hold-back 不够——切分器会把**已完整**的链接/文件名再次按 `.` 拆开。因此 `_drainTtsBuffer` 在切分前要执行 `stripLinksAndPaths` + `protectDots`。另外 hold-back 在流末尾会卡住最后一个词，故 `_drainTtsBuffer` 增加 `flushAll` 模式：定时器与收尾流程用 `flushAll: true`，不再 hold-back。
 
 ### 1. `lib/services/tts_player.dart` — `sanitize`（静态）
 
-在现有清洗基础上增改：
+在现有清洗基础上重构为可复用静态方法：
 
-- **相对路径**：把路径正则扩展到含斜杠但无前导 `/` 的相对路径（`lib/main.dart`），整条（含前导段）删除。判定：含 `/` 的路径样 token。
-- **文件名点号 → 点**：新增 `(?<=[A-Za-z0-9])\.(?=[A-Za-z0-9])` → `点`，须在「通用标点 → 逗号」步骤**之前**执行，避免 `.` 先被替换成逗号。例：`MEMORY.MD`→`MEMORY点MD`、`v2.0`→`v2点0`。
-- **小写**：流程末尾 `.toLowerCase()`，全部 ASCII 字母转小写。
+- **`stripLinksAndPaths(String)`**：去掉 `<image-url>`、`MEDIA/VIDEO:` 链接、Markdown 链接（保留文字）、裸 http/ws URL、绝对路径（`/`、`~/`、`C:\`）、以及含斜杠的相对路径（`lib/main.dart`，连前导段一起删）。
+- **`protectDots(String)`**：`(?<=[A-Za-z0-9])\.(?=[A-Za-z0-9])` → `点`，让 `MEMORY.MD`→`MEMORY点MD`、`v2.0`→`v2点0`。
+- **`sanitize`**：先 `stripLinksAndPaths` → `protectDots`，再做工具调用剥离、inline code、emoji、通用标点→逗号、折叠、trim，最后 `.toLowerCase()` 全部转小写。`点` 属 CJK，会被保留且不受小写影响。
 
-### 2. `lib/services/tts_player.dart` — 新增静态 `inProgressLinkTail(String) -> int`
+### 2. `lib/services/tts_player.dart` — 新增静态 `inProgressTail(String) -> int`
 
-- 返回「字符串末尾尚未结束的 URL/路径」的起始下标；无则返回 `-1`。
-- 判定：最后一个 URL（`(?:https?|wss?)://…`）或斜杠路径 token，是否一直延伸到字符串结尾（其后还没出现空格 / 中文 / 句末标点等终结符）。延伸到结尾 ⇒ 可能还在增长 ⇒ 返回其起点；已被终结 ⇒ 返回 -1。
+- 返回「字符串末尾尚未结束」的起始下标；无则返回 `-1`。覆盖四类锚定到结尾的尾部：
+  1. URL：`(?:https?|wss?)://…$`
+  2. 绝对路径：`(?:[A-Za-z]:[\\/]|~/|/)…$`
+  3. 含斜杠相对路径：`[\w.~-]+(?:[\\/][\w.~-]*)+$`
+  4. 文件名进行中：`[A-Za-z0-9]+\.$`（末尾「词+点」，可能是 `memory.md` 还没收全）
+- URL/路径用的字符类排除空格、中文与句末标点，所以一旦被这些字符终结即视为完整，返回 -1。
 - 纯函数，便于单测。
 
 ### 3. `lib/screens/chat_screen.dart` — `_drainTtsBuffer`
 
-- 在现有 `🛠️` 未闭合 hold-back 之后，调用 `TtsPlayer.inProgressLinkTail(text)`：若 `>=0`，把该尾段写回 `_ttsBuffer`、从本次返回值中截掉。
-- 这样切分器永远拿不到半截链接/路径。链接/路径被空格/标点终结、或流结束时由 `finally` 兜底 drain，此时已完整，`sanitize` 整条删除。
+- 改签名为 `_drainTtsBuffer({bool flushAll = false})`。
+- **非 flushAll（流式中）**：先剥已闭合的 `🛠️…(agent)`；hold back 未闭合 `🛠️`；再 `inProgressTail` hold back 未结束的链接/路径/文件名；然后对安全前缀执行 `stripLinksAndPaths` + `protectDots` 返回。
+- **flushAll（定时器 / 收尾）**：剥掉未闭合 `🛠️…` 尾巴（不朗读残缺工具调用），不再 hold-back，其余执行 `stripLinksAndPaths` + `protectDots` 后整体返回，避免末尾词被永久卡住。
+- 把 2 秒定时器、循环后收尾、`finally` 处的 drain 调用都改为 `flushAll: true`。
 
 ### 4. 测试 `test/tts_player_test.dart`
 
@@ -48,11 +56,12 @@
   - `MEMORY.MD` → `memory点md`；`v2.0` → `v2点0`。
   - 大写 → 小写（`HELLO` → `hello`）。
   - 纯中文文本不受影响。
-- `inProgressLinkTail`：
+- `inProgressTail`：
   - 尾部半截 URL（`见 https://foo.co`）返回该 URL 起点。
   - 尾部半截路径（`打开 /mnt/b/li`）返回起点。
-  - 已被空格/标点终结的链接返回 -1。
-  - 无链接返回 -1。
+  - 尾部进行中文件名（`看 memory.`）返回起点。
+  - 已被空格/标点终结的链接（`见 https://foo.com 了`）返回 -1。
+  - 无链接（`你好世界`）返回 -1。
 
 ## 影响范围与权衡
 

@@ -213,38 +213,23 @@ class _ChatScreenState extends State<ChatScreen> {
     final delimRe = RegExp(r'[，,。.！？!?；;]');
     final sentDelim = RegExp(r'[。.！？!?]');
     final speakableRe = RegExp(r'[一-鿿a-zA-Z0-9]');
-    final toolCallBlockRe = RegExp(r'🛠️.*?\(agent\)', dotAll: true);
-    bool _ttsInToolCall = false;
-
-    String stripToolCall(String s) {
-      // Strip completed 🛠️ ... (agent) blocks.  Use the display-side
-      // variant that also strips an unclosed 🛠️… suffix.
-      return s.replaceAll(RegExp(r'🛠️.*?(?:\(agent\)|$)', dotAll: true), '');
-    }
 
     /// Drain [_ttsBuffer] into text that is safe to feed into TTS chunking.
-    /// While streaming ([flushAll] false) an unclosed 🛠️ marker and any
-    /// still-arriving URL/path/filename at the tail are pushed back into
-    /// [_ttsBuffer] for later completion. On final flush ([flushAll] true) no
-    /// tail is held back so the last word is never stuck. In both cases
-    /// complete links/paths are removed and file-name dots become 点 before
-    /// chunking, so the delimiter splitter can't break them into fragments.
+    /// While streaming ([flushAll] false) a still-arriving URL/path/filename at
+    /// the tail is pushed back into [_ttsBuffer] for later completion. On final
+    /// flush ([flushAll] true) no tail is held back so the last word is never
+    /// stuck. Complete links/paths are removed and file-name dots become 点
+    /// before chunking, so the delimiter splitter can't break them into
+    /// fragments.
     String _drainTtsBuffer({bool flushAll = false}) {
       var text = _ttsBuffer.toString();
       _ttsBuffer.clear();
-      // Strip complete tool-call announcements first
-      text = text.replaceAll(toolCallBlockRe, '');
       if (flushAll) {
-        // Drop a trailing unclosed tool-call marker (don't speak it)
-        text = text.replaceAll(RegExp(r'🛠️.*$', dotAll: true), '');
+        // nothing to hold back on final flush
       } else {
-        // Hold back from the earliest of: an unclosed 🛠️ marker, or a
-        // still-arriving URL/path/filename at the tail. A single contiguous
-        // push-back keeps the held text in original order.
+        // Hold back a still-arriving URL/path/filename at the tail.
         int holdAt = text.length;
-        final toolIdx = text.indexOf('🛠️');
-        if (toolIdx >= 0) holdAt = toolIdx;
-        final tailIdx = TtsPlayer.inProgressTail(text.substring(0, holdAt));
+        final tailIdx = TtsPlayer.inProgressTail(text);
         if (tailIdx >= 0) holdAt = tailIdx;
         if (holdAt < text.length) {
           _ttsBuffer.write(text.substring(holdAt));
@@ -282,7 +267,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // portions before they enter the TTS pipeline.
         _pendingText.write(token);
 
-        final display = stripToolCall(buffer.toString());
+        final display = buffer.toString();
         setState(() {
           aiMessage.content = display;
         });
@@ -342,15 +327,15 @@ class _ChatScreenState extends State<ChatScreen> {
     } on HttpException {
       debugPrint('[SEND] HttpException, buffer empty=${buffer.isEmpty}, tokens=$_tokenCount');
       setState(() {
-        aiMessage.content = buffer.isEmpty ? '网络断了，请重试' : '${stripToolCall(buffer.toString())}...';
+        aiMessage.content = buffer.isEmpty ? '网络断了，请重试' : '${buffer.toString()}...';
       });
     } catch (e) {
       debugPrint('[SEND] catch error: $e (${e.runtimeType}), buffer empty=${buffer.isEmpty}, tokens=$_tokenCount');
       setState(() {
-        aiMessage.content = buffer.isEmpty ? '出错了，请重试' : '${stripToolCall(buffer.toString())}...';
+        aiMessage.content = buffer.isEmpty ? '出错了，请重试' : '${buffer.toString()}...';
       });
     } finally {
-      debugPrint('[SEND] finally, tokens=$_tokenCount');
+      debugPrint('[SEND] finally, tokens=$_tokenCount, bufferLen=${buffer.length}, displayLen=${aiMessage.content.length}');
       _flushTimer?.cancel();
       var tail = _drainTtsBuffer(flushAll: true);
       while (tail.isNotEmpty) {
@@ -484,18 +469,31 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () {
-              Navigator.of(context).push(
+            onTap: () async {
+              final cleared = await Navigator.of(context).push<bool>(
                 MaterialPageRoute(
                   builder: (_) => SettingsScreen(
                     settingsService: widget.settingsService,
                   ),
                 ),
               );
+              if (cleared == true && mounted) {
+                _ttsPlayer.stop();
+                setState(() {
+                  _messages.clear();
+                  _displayCount = 0;
+                  _messages.add(Message(
+                    role: MessageRole.ai,
+                    content: '你好呀！我是糖小豆~ 今天过得怎么样？',
+                  ));
+                  _displayCount = 1;
+                });
+                _scrollToBottom();
+              }
             },
             child: const Padding(
               padding: EdgeInsets.only(right: 14),
-              child: Icon(Icons.settings, size: 24, color: AppColors.primaryLight),
+              child: Icon(Icons.tune, size: 24, color: AppColors.primaryLight),
             ),
           ),
         ],
@@ -587,6 +585,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   static const _commands = ['/compact', '/new', '/hardstop'];
+  static const _commandNotes = {
+    '/compact': '压缩上下文',
+    '/new': '清空上下文',
+    '/hardstop': '停止当前对话',
+  };
 
   Future<void> _pickImage({ImageSource source = ImageSource.gallery}) async {
     try {
@@ -668,24 +671,35 @@ class _ChatScreenState extends State<ChatScreen> {
                     color: Colors.white,
                     border: Border(top: BorderSide(color: Color(0xFFEDE7F6))),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: filtered.map((c) {
+                      final note = _commandNotes[c] ?? '';
                       return Padding(
-                        padding: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.only(bottom: 8),
                         child: GestureDetector(
                           onTap: () {
                             _textController.clear();
                             _sendMessage(c);
                           },
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             decoration: BoxDecoration(
                               color: AppColors.primaryBg,
-                              borderRadius: BorderRadius.circular(18),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: AppColors.primaryLight, width: 1),
                             ),
-                            child: Text(c, style: const TextStyle(fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w500)),
+                            child: Row(
+                              children: [
+                                Text(c, style: const TextStyle(fontSize: 14, color: AppColors.primary, fontWeight: FontWeight.w600)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(note, style: const TextStyle(fontSize: 12, color: Color(0xFF999999))),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );

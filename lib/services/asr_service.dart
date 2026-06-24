@@ -13,7 +13,7 @@ class AsrService {
     final channel = WebSocketChannel.connect(wsUrl);
 
     final completer = Completer<String>();
-    final buffer = StringBuffer();
+    String lastText = '';
 
     channel.stream.listen(
       (data) {
@@ -22,36 +22,45 @@ class AsrService {
             final json = jsonDecode(data);
             if (json['status'] == 'ok') return;
             final text = json['text'] as String?;
-            if (text != null && json['is_sentence_end'] == true) {
-              buffer.clear();
-              buffer.write(text);
+            if (text != null && text.isNotEmpty) {
+              lastText = text;
+            }
+            if (json['is_sentence_end'] == true) {
+              if (!completer.isCompleted) {
+                completer.complete(lastText);
+              }
             }
           } on FormatException {
-            // ignore malformed
+            // ignore
           }
         }
       },
       onError: (e) {
         if (!completer.isCompleted) {
-          completer.complete(buffer.isNotEmpty ? buffer.toString() : '');
+          completer.complete(lastText.isNotEmpty ? lastText : '');
         }
       },
       onDone: () {
         if (!completer.isCompleted) {
-          completer.complete(buffer.isNotEmpty ? buffer.toString() : '');
+          completer.complete(lastText.isNotEmpty ? lastText : '');
         }
       },
       cancelOnError: true,
     );
 
     await for (final chunk in audioStream) {
-      channel.sink.add(chunk);
+      // Send in small chunks like streaming audio
+      const chunkSize = 3200;
+      for (var i = 0; i < chunk.length; i += chunkSize) {
+        final end = (i + chunkSize < chunk.length) ? i + chunkSize : chunk.length;
+        channel.sink.add(chunk.sublist(i, end));
+      }
     }
     channel.sink.add('BYE');
 
     final result = await completer.future.timeout(
       const Duration(seconds: 10),
-      onTimeout: () => buffer.isNotEmpty ? buffer.toString() : '',
+      onTimeout: () => lastText,
     );
     await channel.sink.close();
     return result;

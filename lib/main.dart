@@ -13,18 +13,18 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = SettingsService();
   await settings.load();
-  runApp(BellaApp(settings: settings));
+  runApp(TangxiaodouApp(settings: settings));
 }
 
-class BellaApp extends StatefulWidget {
+class TangxiaodouApp extends StatefulWidget {
   final SettingsService settings;
-  const BellaApp({required this.settings, super.key});
+  const TangxiaodouApp({required this.settings, super.key});
 
   @override
-  State<BellaApp> createState() => _BellaAppState();
+  State<TangxiaodouApp> createState() => _TangxiaodouAppState();
 }
 
-class _BellaAppState extends State<BellaApp> {
+class _TangxiaodouAppState extends State<TangxiaodouApp> {
   late LlmService _llmService;
   late AsrService _asrService;
   late TtsService _ttsService;

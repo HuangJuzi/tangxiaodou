@@ -1,5 +1,5 @@
-name: bella
-description: "A new Flutter project."
+name: tangxiaodou
+description: "糖小豆 — 基于 Sophclaw 的 AI 养成伙伴，会聊天、能陪伴"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -45,7 +45,7 @@ dependencies:
   video_player: ^2.9.0
   dio: ^5.7.0
   flutter_secure_storage: ^9.2.2
-  mobile_scanner: ^5.2.3
+  qr_code_scanner_plus: ^2.1.2
 
 dependency_overrides:
   record_platform_interface: 1.4.0

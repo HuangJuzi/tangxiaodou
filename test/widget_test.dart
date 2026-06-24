@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:bella/main.dart';
-import 'package:bella/models/app_config.dart';
-import 'package:bella/services/settings_service.dart';
+import 'package:tangxiaodou/main.dart';
+import 'package:tangxiaodou/models/app_config.dart';
+import 'package:tangxiaodou/services/settings_service.dart';
 
 void main() {
   testWidgets('App renders chat screen with saved config', (WidgetTester tester) async {
@@ -21,7 +21,7 @@ void main() {
     final settings = SettingsService();
     await settings.load();
 
-    await tester.pumpWidget(BellaApp(settings: settings));
+    await tester.pumpWidget(TangxiaodouApp(settings: settings));
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('按住说话'), findsOneWidget);

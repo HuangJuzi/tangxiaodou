@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:bella/models/app_config.dart';
-import 'package:bella/services/settings_service.dart';
+import 'package:tangxiaodou/models/app_config.dart';
+import 'package:tangxiaodou/services/settings_service.dart';
 
 void main() {
   setUp(() {

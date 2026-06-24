@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:bella/models/app_config.dart';
+import 'package:tangxiaodou/models/app_config.dart';
 
 void main() {
   group('AppConfig', () {
@@ -92,32 +92,32 @@ void main() {
 
     group('fromBase64', () {
       // Sample base64 decodes to:
-      // {"agentId":"dept-token","apiSecret":"7849cc...","streamUrl":"https://moltbot-...sophnet.com/bot-api/v2/dept-token/chat-stream"}
+      // {"agentId":"test-agent","apiSecret":"test-secret-123","streamUrl":"https://example.com/bot-api/v2/test-agent/chat-stream"}
       const sampleBase64 =
-          'eyJhZ2VudElkIjoiZGVwdC10b2tlbiIsImFwaVNlY3JldCI6Ijc4NDljYzRlZjAzYTM1MmNlMzY3MDNmZmEyYmZjMzI5NTk1YjQ3OGYzMTRmZjYyM2FlM2U1MjlhZGI0MjY3OTEiLCJzdHJlYW1VcmwiOiJodHRwczovL21vbHRib3QtMDAxNGM2MmI3Yzc5NDdjMy5zb3BobmV0LmNvbS9ib3QtYXBpL3YyL2RlcHQtdG9rZW4vY2hhdC1zdHJlYW0ifQ==';
+          'eyJhZ2VudElkIjoidGVzdC1hZ2VudCIsImFwaVNlY3JldCI6InRlc3Qtc2VjcmV0LTEyMyIsInN0cmVhbVVybCI6Imh0dHBzOi8vZXhhbXBsZS5jb20vYm90LWFwaS92Mi90ZXN0LWFnZW50L2NoYXQtc3RyZWFtIn0=';
 
       test('parses valid base64 and extracts streamUrl + apiSecret', () {
         final result = BotApiBase64.parse(sampleBase64);
         expect(result, isNotNull);
-        expect(result!.streamUrl, startsWith('https://moltbot-'));
-        expect(result.streamUrl, contains('/bot-api/v2/dept-token/chat-stream'));
-        expect(result.apiSecret, '7849cc4ef03a352ce36703ffa2bfc329595b478f314ff623ae3e529adb426791');
+        expect(result!.streamUrl, startsWith('https://example.com'));
+        expect(result.streamUrl, contains('/bot-api/v2/test-agent/chat-stream'));
+        expect(result.apiSecret, 'test-secret-123');
       });
 
       test('parses base64 with missing trailing padding (common from QR generators)', () {
-        // Same payload as sampleBase64 but with trailing '==' stripped.
+        // Same payload as sampleBase64 but with trailing '=' stripped.
         final stripped = sampleBase64.replaceAll(RegExp(r'=+$'), '');
         expect(stripped.length % 4, isNot(0));
         final result = BotApiBase64.parse(stripped);
         expect(result, isNotNull);
-        expect(result!.streamUrl, contains('/bot-api/v2/dept-token/chat-stream'));
-        expect(result.apiSecret, '7849cc4ef03a352ce36703ffa2bfc329595b478f314ff623ae3e529adb426791');
+        expect(result!.streamUrl, contains('/bot-api/v2/test-agent/chat-stream'));
+        expect(result.apiSecret, 'test-secret-123');
       });
 
       test('parses base64 surrounded by whitespace', () {
         final result = BotApiBase64.parse('  \n$sampleBase64 \t');
         expect(result, isNotNull);
-        expect(result!.streamUrl, startsWith('https://moltbot-'));
+        expect(result!.streamUrl, startsWith('https://example.com'));
       });
 
       test('returns null on invalid base64', () {

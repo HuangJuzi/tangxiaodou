@@ -8,6 +8,7 @@ class Message {
   String content;
   bool isStreaming;
   final DateTime createdAt;
+  final String? imagePath;
 
   Message({
     String? id,
@@ -15,6 +16,7 @@ class Message {
     required this.content,
     this.isStreaming = false,
     DateTime? createdAt,
+    this.imagePath,
   })  : id = id ?? const Uuid().v4(),
         createdAt = createdAt ?? DateTime.now();
 
@@ -23,6 +25,7 @@ class Message {
         'role': role == MessageRole.user ? 'user' : 'ai',
         'content': content,
         'createdAt': createdAt.toIso8601String(),
+        if (imagePath != null) 'imagePath': imagePath,
       };
 
   factory Message.fromJson(Map<String, dynamic> json) => Message(
@@ -30,5 +33,6 @@ class Message {
         role: (json['role'] as String) == 'user' ? MessageRole.user : MessageRole.ai,
         content: json['content'] as String,
         createdAt: DateTime.parse(json['createdAt'] as String),
+        imagePath: json['imagePath'] as String?,
       );
 }

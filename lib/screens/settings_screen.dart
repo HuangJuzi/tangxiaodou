@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/app_config.dart';
 import '../services/llm_service.dart';
 import '../services/asr_service.dart';
@@ -26,11 +28,16 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _apiKeyCtrl;
   late String _voice;
-  late bool _ttsEnabled;
   bool _saving = false;
   bool _apiKeyObscured = true;
   String? _botApiBase64;
   String? _verifyError;
+  bool _voiceExpanded = false;
+  bool _dataCleared = false;
+
+  String get _voiceLabel =>
+      ttsVoices.entries.where((e) => e.value == _voice).firstOrNull?.key ??
+      _voice;
 
   @override
   void initState() {
@@ -38,7 +45,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final cfg = widget.settingsService.config;
     _apiKeyCtrl = TextEditingController(text: cfg?.asrTtsApiKey ?? '');
     _voice = cfg?.ttsVoice ?? 'longyumi_v2';
-    _ttsEnabled = cfg?.ttsEnabled ?? true;
     // Restore the raw base64 so the masked display shows on settings re-open
     // and the save button stays enabled for voice/key-only changes.
     final raw = cfg?.botApiRawBase64;
@@ -106,7 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       botApiSecret: parsed.apiSecret,
       asrTtsApiKey: _apiKeyCtrl.text.trim(),
       ttsVoice: _voice,
-      ttsEnabled: _ttsEnabled,
+      ttsEnabled: widget.settingsService.config?.ttsEnabled ?? true,
       botApiRawBase64: _botApiBase64!,
     );
 
@@ -143,7 +149,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       if (!mounted) return;
       if (widget.isFirstLaunch) {
-        // SettingsService.notifyListeners will rebuild BellaApp into ChatScreen.
+        // SettingsService.notifyListeners will rebuild TangxiaodouApp into ChatScreen.
         return;
       }
       Navigator.of(context).pop();
@@ -247,10 +253,94 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
 
+  Widget _iconBox(String emoji) => Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.primaryBg,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: Text(emoji, style: const TextStyle(fontSize: 16)),
+      );
+
+  Future<void> _confirmClearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空缓存'),
+        content: const Text('将清空聊天记录、图片和语音缓存，无法恢复。是否继续？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('清空')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _clearCache();
+  }
+
+  Future<void> _clearCache() async {
+    try {
+      final tmp = await getTemporaryDirectory();
+      if (tmp.existsSync()) {
+        await for (final f in tmp.list()) {
+          try {
+            if (f is File) await f.delete();
+          } catch (_) {}
+        }
+      }
+      final docs = await getApplicationDocumentsDirectory();
+      final msgFile = File('${docs.path}/messages.json');
+      if (await msgFile.exists()) await msgFile.delete();
+      await for (final f in docs.list()) {
+        if (f is File && f.path.contains('image_')) {
+          try {
+            await f.delete();
+          } catch (_) {}
+        }
+      }
+      _dataCleared = true;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已清空缓存')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('清空失败')),
+      );
+    }
+  }
+
+  Future<void> _confirmClearCredentials() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空秘钥'),
+        content: const Text('将清空 Bot API 凭证和 Sophnet API Key，需要重新配置才能使用。是否继续？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('清空')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await widget.settingsService.clearCredentials();
+    if (!mounted) return;
+    // TangxiaodouApp rebuilds to first-launch SettingsScreen; pop this route to land on it.
+    Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !widget.isFirstLaunch,
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (widget.isFirstLaunch) return;
+        Navigator.of(context).pop(_dataCleared);
+      },
       child: Scaffold(
         backgroundColor: const Color(0xFFF7F5FA),
         appBar: AppBar(
@@ -265,22 +355,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _sectionTitle('Sophclaw Bot API'),
             Container(
               color: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(
-                      _botApiBase64 == null
-                          ? '—'
-                          : maskBase64(_botApiBase64!),
-                      style: const TextStyle(
-                        fontSize: 15,
-                        color: Color(0xFF666666),
-                        fontFamily: 'monospace',
+                  Row(
+                    children: [
+                      _iconBox('🤖'),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _botApiBase64 == null
+                              ? '—'
+                              : maskBase64(_botApiBase64!),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            color: Color(0xFF666666),
+                            fontFamily: 'monospace',
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -308,56 +403,120 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _sectionTitle('Sophnet API Key'),
             Container(
               color: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: TextField(
-                controller: _apiKeyCtrl,
-                obscureText: _apiKeyObscured,
-                enabled: !_saving,
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                  border: InputBorder.none,
-                  suffixIcon: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (_) => setState(() => _apiKeyObscured = false),
-                    onTapUp: (_) => setState(() => _apiKeyObscured = true),
-                    onTapCancel: () => setState(() => _apiKeyObscured = true),
-                    child: Icon(
-                      _apiKeyObscured ? Icons.visibility_off : Icons.visibility,
-                      size: 20,
-                      color: const Color(0xFF888888),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  _iconBox('🔑'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _apiKeyCtrl,
+                      obscureText: _apiKeyObscured,
+                      enabled: !_saving,
+                      enableInteractiveSelection: false,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        border: InputBorder.none,
+                        suffixIcon: IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                          icon: Icon(
+                            _apiKeyObscured ? Icons.visibility_off : Icons.visibility,
+                            size: 20,
+                            color: const Color(0xFF888888),
+                          ),
+                          onPressed: () =>
+                              setState(() => _apiKeyObscured = !_apiKeyObscured),
+                        ),
+                      ),
+                      style: const TextStyle(fontSize: 15),
+                      onChanged: (_) => setState(() {}),
                     ),
                   ),
-                ),
-                style: const TextStyle(fontSize: 15),
-                onChanged: (_) => setState(() {}),
+                ],
               ),
             ),
-            _sectionTitle('TTS 音色'),
+            _sectionTitle('音色'),
             Container(
               color: Colors.white,
               child: Column(
-                children: ttsVoices.entries.map((e) {
-                  return RadioListTile<String>(
-                    value: e.value,
-                    groupValue: _voice,
-                    title: Text(e.key),
-                    activeColor: AppColors.primary,
-                    onChanged: (v) {
-                      if (v != null) setState(() => _voice = v);
-                    },
-                  );
-                }).toList(),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => setState(() => _voiceExpanded = !_voiceExpanded),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      child: Row(
+                        children: [
+                          _iconBox('🎵'),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Text('音色设置', style: TextStyle(fontSize: 15, color: Color(0xFF333333))),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '· $_voiceLabel',
+                                  style: const TextStyle(fontSize: 13, color: AppColors.primaryLight),
+                                ),
+                              ],
+                            ),
+                          ),
+                          AnimatedRotation(
+                            turns: _voiceExpanded ? 0.25 : 0,
+                            duration: const Duration(milliseconds: 200),
+                            child: const Icon(Icons.chevron_right, size: 20, color: Color(0xFFBBBBBB)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: _voiceExpanded
+                        ? Column(
+                            children: ttsVoices.entries.map((e) {
+                              return RadioListTile<String>(
+                                value: e.value,
+                                groupValue: _voice,
+                                title: Text(e.key),
+                                activeColor: AppColors.primary,
+                                onChanged: (v) {
+                                  if (v != null) setState(() => _voice = v);
+                                },
+                              );
+                            }).toList(),
+                          )
+                        : const SizedBox(width: double.infinity, height: 0),
+                  ),
+                ],
               ),
             ),
-            _sectionTitle('TTS 播放开关'),
+            _sectionTitle('其他'),
             Container(
               color: Colors.white,
-              child: SwitchListTile(
-                title: const Text('收到回复时自动播放语音'),
-                value: _ttsEnabled,
-                activeColor: AppColors.primary,
-                onChanged: (v) => setState(() => _ttsEnabled = v),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: _iconBox('🧹'),
+                    title: const Text('清空缓存'),
+                    subtitle: const Text('清空聊天记录、图片和语音缓存', style: TextStyle(fontSize: 12, color: Color(0xFF888888))),
+                    trailing: const Icon(Icons.chevron_right, size: 20, color: Color(0xFFBBBBBB)),
+                    onTap: _saving ? null : _confirmClearCache,
+                  ),
+                  const Divider(height: 1, indent: 16),
+                  ListTile(
+                    leading: _iconBox('🔒'),
+                    title: const Text('清空秘钥'),
+                    subtitle: const Text('清空 Bot API 凭证和 Sophnet API Key', style: TextStyle(fontSize: 12, color: Color(0xFF888888))),
+                    trailing: const Icon(Icons.chevron_right, size: 20, color: Color(0xFFBBBBBB)),
+                    onTap: _saving ? null : _confirmClearCredentials,
+                  ),
+                ],
               ),
             ),
           ],

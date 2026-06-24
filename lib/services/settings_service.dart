@@ -36,4 +36,10 @@ class SettingsService extends ChangeNotifier {
     await _storage.write(key: _storageKey, value: jsonEncode(cfg.toJson()));
     notifyListeners();
   }
+
+  Future<void> clearCredentials() async {
+    await _storage.delete(key: _storageKey);
+    _config = null;
+    notifyListeners();
+  }
 }
