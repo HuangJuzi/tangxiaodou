@@ -47,3 +47,8 @@ app.*.map.json
 # Claude Code
 .claude/
 CLAUDE.md
+
+# Gradle build output
+android/build/
+android/.gradle/
+build/

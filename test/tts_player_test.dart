@@ -35,7 +35,7 @@ void main() {
     setUp(() {
       audioPlayer = AudioPlayer();
       ttsService = TtsService(apiKey: 'test-key');
-      player = TtsPlayer(ttsService: ttsService, audioPlayer: audioPlayer);
+      player = TtsPlayer(ttsService: ttsService, sink: AudioPlayerSink(audioPlayer));
     });
 
     tearDown(() async {

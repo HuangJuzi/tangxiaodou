@@ -68,9 +68,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _ttsEnabled = widget.settingsService.config?.ttsEnabled ?? true;
-    _ttsPlayer = TtsPlayer(ttsService: widget.ttsService, audioPlayer: _audioPlayer, onStateChanged: () {
-      if (mounted) setState(() {});
-    });
+    _ttsPlayer = TtsPlayer(ttsService: widget.ttsService, sink: AudioPlayerSink(_audioPlayer));
     _loadMessages().then((_) {
       if (_messages.isEmpty) {
         setState(() {
@@ -132,6 +130,30 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_scrollController.hasClients) return;
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     });
+  }
+
+  /// Jump to the newest message from anywhere in the list. A lazy
+  /// [ListView.builder] with variable-height items only corrects
+  /// [maxScrollExtent] as off-screen items are built, so a single
+  /// [jumpTo] from far up can land short of the true bottom. Re-settle across
+  /// frames so we follow the corrected extent and actually reach the latest
+  /// message.
+  void _scrollToLatest() {
+    if (!_scrollController.hasClients) return;
+    var tries = 0;
+    void settle() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scrollController.hasClients) return;
+        final pos = _scrollController.position;
+        final before = pos.pixels;
+        pos.jumpTo(pos.maxScrollExtent);
+        if (pos.pixels != before && ++tries < 6) {
+          settle();
+        }
+      });
+    }
+    _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    settle();
   }
 
   Future<String> get _messagesPath async {
@@ -522,10 +544,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           _playTts(msg);
                         }
                       },
-                    playingMessageId: _ttsPlayer.playingMessageId,
-                    onStopTts: _ttsPlayer.stop,
-                    isTtsAutoPlaying: _ttsPlayer.isAutoPlaying && msg.id == _autoPlayMessageId,
-                  );
+                      ttsPlayer: _ttsPlayer,
+                      autoPlayMessageId: _autoPlayMessageId,
+                      onStopTts: _ttsPlayer.stop,
+                    );
                 },
               ),
                 Positioned(
@@ -537,14 +559,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         opacity: _showScrollBtn ? 1 : 0,
                         duration: const Duration(milliseconds: 200),
                         child: GestureDetector(
-                          onTap: () {
-                            setState(() {});
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (_scrollController.hasClients) {
-                                _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-                              }
-                            });
-                          },
+                          onTap: _scrollToLatest,
                           child: Container(
                             height: 30,
                             margin: const EdgeInsets.all(8),

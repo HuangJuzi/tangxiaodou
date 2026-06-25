@@ -8,26 +8,25 @@ import 'package:gal/gal.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 import '../theme.dart';
+import '../services/tts_player.dart';
 import 'typing_dots.dart';
 import 'video_player_dialog.dart';
 
 class ChatBubble extends StatelessWidget {
   final Message message;
   final VoidCallback? onTtsTap;
-  final String? playingMessageId;
+  final TtsPlayer ttsPlayer;
+  final String? autoPlayMessageId;
   final VoidCallback? onStopTts;
-  final bool isTtsAutoPlaying;
 
   const ChatBubble({
     required this.message,
     this.onTtsTap,
-    this.playingMessageId,
+    required this.ttsPlayer,
+    this.autoPlayMessageId,
     this.onStopTts,
-    this.isTtsAutoPlaying = false,
     super.key,
   });
-
-  bool get _isPlaying => playingMessageId == message.id;
 
   String get _displayContent {
     var out = message.content.replaceAllMapped(
@@ -197,15 +196,32 @@ class ChatBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (isAi &&
-                    message.content.trim().isNotEmpty &&
-                    (!message.isStreaming || isTtsAutoPlaying)) ...[
-                  const SizedBox(height: 4),
-                  _TtsButton(
-                    isPlaying: isTtsAutoPlaying || _isPlaying,
-                    onTap: (isTtsAutoPlaying || _isPlaying) ? onStopTts : onTtsTap,
+                if (isAi)
+                  // The TTS button reacts to TtsPlayer state on its own so TTS
+                  // state changes don't rebuild the streaming markdown body
+                  // (which would re-parse the whole message and cause jitter).
+                  ListenableBuilder(
+                    listenable: ttsPlayer,
+                    builder: (context, _) {
+                      final isAuto =
+                          ttsPlayer.isAutoPlaying && message.id == autoPlayMessageId;
+                      final playing =
+                          isAuto || ttsPlayer.playingMessageId == message.id;
+                      if (message.content.trim().isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+                      if (message.isStreaming && !isAuto) {
+                        return const SizedBox.shrink();
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: _TtsButton(
+                          isPlaying: playing,
+                          onTap: playing ? onStopTts : onTtsTap,
+                        ),
+                      );
+                    },
                   ),
-                ],
               ],
             ),
           ),
